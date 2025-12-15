@@ -43,6 +43,8 @@ def setup_database():
         ('NATIONAL', 'Nationaal'),
         ('INTERNATIONAL', 'Internationaal'),
         ('SPORT', 'Sport'),
+        ('TRUMP', 'Trump'),
+        ('RUSSIA', 'Rusland'),
         ('OTHER', 'Overig'),
     ]
     

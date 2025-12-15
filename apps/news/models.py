@@ -14,6 +14,8 @@ class Category(models.Model):
     NATIONAL = 'NATIONAL'
     INTERNATIONAL = 'INTERNATIONAL'
     SPORT = 'SPORT'
+    TRUMP = 'TRUMP'
+    RUSSIA = 'RUSSIA'
     OTHER = 'OTHER'
     
     CATEGORY_CHOICES = [
@@ -21,6 +23,8 @@ class Category(models.Model):
         (NATIONAL, 'Nationaal'),
         (INTERNATIONAL, 'Internationaal'),
         (SPORT, 'Sport'),
+        (TRUMP, 'Trump'),
+        (RUSSIA, 'Rusland'),
         (OTHER, 'Overig'),
     ]
     

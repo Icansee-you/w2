@@ -15,6 +15,8 @@ class Command(BaseCommand):
             (Category.NATIONAL, 'Nationaal'),
             (Category.INTERNATIONAL, 'Internationaal'),
             (Category.SPORT, 'Sport'),
+            (Category.TRUMP, 'Trump'),
+            (Category.RUSSIA, 'Rusland'),
             (Category.OTHER, 'Overig'),
         ]
         

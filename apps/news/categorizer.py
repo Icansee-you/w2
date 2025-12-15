@@ -21,9 +21,23 @@ def assign_category(title='', summary='', content=''):
     text = f"{title} {summary} {content}".lower()
     
     # Keyword mappings (order matters - first match wins)
-    # Order: Politics, National, International, Sport (as per spec)
-    # Note: Legal/court terms are prioritized in National to catch legal news
+    # Order: Trump, Russia (most specific), then Politics, National, International, Sport
+    # Note: Trump and Russia are checked first as they are very specific categories
     keyword_rules = [
+        # Trump - check for Trump mentions (case-insensitive, checked first)
+        {
+            'keywords': [
+                'trump',
+            ],
+            'category_key': Category.TRUMP
+        },
+        # Russia - check for "Rusland" in fulltext (case-insensitive, checked early)
+        {
+            'keywords': [
+                'rusland',
+            ],
+            'category_key': Category.RUSSIA
+        },
         # Politics - more specific political terms, avoiding generic words
         {
             'keywords': [
@@ -80,8 +94,8 @@ def assign_category(title='', summary='', content=''):
         {
             'keywords': [
                 'europa', 'eu', 'europese unie', 'eurozone', 'brussel', 'strasbourg',
-                'vs', 'verenigde staten', 'amerika', 'washington', 'biden', 'trump',
-                'rusland', 'putin', 'moskou', 'oekraïne', 'kiev', 'zelensky',
+                'vs', 'verenigde staten', 'amerika', 'washington', 'biden',
+                'putin', 'moskou', 'oekraïne', 'kiev', 'zelensky',
                 'china', 'peking', 'beijing', 'xi jinping', 'midden-oosten',
                 'israël', 'palestina', 'gaza', 'jeruzalem', 'iran', 'syrië',
                 'verenigde naties', 'vn', 'un', 'navo', 'nato', 'buitenland',
