@@ -17,6 +17,8 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 import django
 django.setup()
 
+from django.core.management import call_command
+
 # Now we can import Django models
 from apps.news.models import Article, Category
 from apps.accounts.models import UserProfile
@@ -115,6 +117,25 @@ def format_datetime(dt):
 
 def main():
     """Main Streamlit app."""
+    # One-time initialization for cloud deployments (e.g., Streamlit Cloud)
+    # If no categories exist, run migrations and init_categories automatically.
+    try:
+        if Category.objects.count() == 0:
+            with st.spinner("Database initialiseren (migraties uitvoeren en categorieën aanmaken)..."):
+                try:
+                    call_command("migrate", interactive=False)
+                except Exception:
+                    # Migrations may already be applied; ignore errors here
+                    pass
+                try:
+                    call_command("init_categories")
+                except Exception:
+                    # Management command might not be available; ignore
+                    pass
+    except Exception:
+        # If database is not reachable, we just continue and show the normal warning below.
+        pass
+
     st.title("📰 NOS Nieuws Aggregator")
     st.markdown("---")
     
