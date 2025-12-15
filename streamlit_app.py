@@ -136,6 +136,44 @@ def get_categories():
             return []
 
 
+def ensure_initial_articles_ingested():
+    """
+    Ensure there are some NOS articles in the database on first deploy.
+    If there are no articles yet, run a one-time ingestion with a limited number
+    of items to quickly seed the feed.
+    """
+    from django.core.management import call_command
+
+    try:
+        if Article.objects.count() == 0:
+            with st.spinner("Eerste NOS artikelen ophalen..."):
+                # Ingest a limited number of items for the initial seed
+                try:
+                    call_command("ingest_nos", max_items=100)
+                except Exception:
+                    # If ingestion fails, we just continue; the app will show a message
+                    pass
+    except Exception:
+        # If the database is not reachable, initialization will handle it
+        pass
+
+
+@st.cache_data(ttl=1800)  # Refresh ingestion at most once every 30 minutes
+def refresh_articles_periodically():
+    """
+    Periodically refresh NOS RSS feed.
+    This is safe to call on every page load; caching ensures it's only executed
+    once per 30-minute window per server instance.
+    """
+    from django.core.management import call_command
+
+    try:
+        call_command("ingest_nos")
+    except Exception:
+        # Swallow errors so the UI remains usable even if ingestion fails
+        pass
+
+
 @st.cache_data(ttl=60)  # Cache for 1 minute
 def get_articles_count():
     """Get total article count."""
@@ -179,6 +217,9 @@ def main():
     """Main Streamlit app."""
     # Ensure database is initialized before any queries
     ensure_database_initialized()
+    # Ensure we have initial data and keep refreshing the feed
+    ensure_initial_articles_ingested()
+    refresh_articles_periodically()
     
     st.title("📰 NOS Nieuws Aggregator")
     st.markdown("---")
