@@ -132,13 +132,37 @@ The app will automatically open in your browser at `http://localhost:8501`
 
 ## Deploy to Streamlit Cloud
 
-1. **Push to GitHub** (see STREAMLIT_DEPLOYMENT.md for details)
+1. **Push to GitHub** (see GITHUB_DEPLOYMENT.md for details)
+
+   **Quick push script:**
+   ```powershell
+   .\push_to_github.ps1
+   ```
+   
+   **Or manually:**
+   ```powershell
+   git init
+   git add .
+   git commit -m "Initial commit: NOS News Aggregator with Streamlit"
+   git remote add origin https://github.com/Icansee-you/test1830.git
+   git branch -M main
+   git push -u origin main
+   ```
 
 2. **Deploy on Streamlit Cloud**:
    - Go to [share.streamlit.io](https://share.streamlit.io)
-   - Connect your GitHub repository
-   - Set main file: `streamlit_app.py`
-   - Add secrets (DATABASE_URL, DJANGO_SECRET_KEY, etc.)
+   - Sign in with GitHub
+   - Click "New app"
+   - **Repository**: Select `Icansee-you/test1830`
+   - **Branch**: `main`
+   - **Main file path**: `streamlit_app.py`
+   - Click "Deploy"
+   - **Add secrets** (in Advanced settings → Secrets):
+     ```toml
+     DJANGO_SECRET_KEY = "your-very-long-random-secret-key-here"
+     DEBUG = "False"
+     ```
+   - The app will auto-initialize the database on first run!
 
 3. **Initialize database**:
    - Run `python setup_streamlit_db.py` via Streamlit Cloud console
