@@ -1,6 +1,26 @@
 """
 RSS feed parsing and ingestion service.
 """
+# Workaround for Python 3.13: cgi module was removed
+# Patch cgi module before feedparser tries to import it
+import sys
+try:
+    import cgi
+except ImportError:
+    # Python 3.13+ - cgi module was removed
+    try:
+        import legacy_cgi as cgi
+        sys.modules['cgi'] = cgi
+    except ImportError:
+        # If legacy-cgi is not available, create a minimal cgi module stub
+        from types import ModuleType
+        cgi = ModuleType('cgi')
+        sys.modules['cgi'] = cgi
+        # Add minimal functions that feedparser might need
+        def parse_header(value):
+            return value.split(';', 1)[0].strip(), {}
+        cgi.parse_header = parse_header
+
 import feedparser
 from datetime import datetime, timezone as tz
 from django.conf import settings
