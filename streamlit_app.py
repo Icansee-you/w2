@@ -70,10 +70,70 @@ if 'selected_categories' not in st.session_state:
     st.session_state.selected_categories = []
 
 
+def ensure_database_initialized():
+    """Ensure database is initialized with migrations and categories."""
+    # Use session state to track if we've already initialized
+    if 'db_initialized' in st.session_state and st.session_state.db_initialized:
+        return
+    
+    from django.db import connection
+    from django.core.management import call_command
+    
+    # Check if database file exists and has tables
+    try:
+        with connection.cursor() as cursor:
+            # Try to query a table to see if database is initialized
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='news_category'")
+            table_exists = cursor.fetchone() is not None
+            
+            if not table_exists:
+                # Run migrations
+                try:
+                    call_command("migrate", interactive=False, verbosity=0)
+                except Exception:
+                    # If migrations fail, try to continue anyway
+                    pass
+                
+                # Initialize categories
+                try:
+                    call_command("init_categories", verbosity=0)
+                except Exception:
+                    # If command fails, create categories manually
+                    category_data = [
+                        ('POLITICS', 'Politiek'),
+                        ('NATIONAL', 'Nationaal'),
+                        ('INTERNATIONAL', 'Internationaal'),
+                        ('SPORT', 'Sport'),
+                        ('OTHER', 'Overig'),
+                    ]
+                    for key, name in category_data:
+                        Category.objects.get_or_create(key=key, defaults={'name': name})
+                
+                st.session_state.db_initialized = True
+            else:
+                st.session_state.db_initialized = True
+    except Exception:
+        # If database doesn't exist or can't be accessed, migrations will create it
+        try:
+            call_command("migrate", interactive=False, verbosity=0)
+            call_command("init_categories", verbosity=0)
+            st.session_state.db_initialized = True
+        except Exception:
+            pass
+
+
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def get_categories():
     """Get all categories."""
-    return list(Category.objects.all().order_by('key'))
+    try:
+        return list(Category.objects.all().order_by('key'))
+    except Exception:
+        # If database query fails, try to initialize and return empty list
+        ensure_database_initialized()
+        try:
+            return list(Category.objects.all().order_by('key'))
+        except Exception:
+            return []
 
 
 @st.cache_data(ttl=60)  # Cache for 1 minute
@@ -117,25 +177,9 @@ def format_datetime(dt):
 
 def main():
     """Main Streamlit app."""
-    # One-time initialization for cloud deployments (e.g., Streamlit Cloud)
-    # If no categories exist, run migrations and init_categories automatically.
-    try:
-        if Category.objects.count() == 0:
-            with st.spinner("Database initialiseren (migraties uitvoeren en categorieën aanmaken)..."):
-                try:
-                    call_command("migrate", interactive=False)
-                except Exception:
-                    # Migrations may already be applied; ignore errors here
-                    pass
-                try:
-                    call_command("init_categories")
-                except Exception:
-                    # Management command might not be available; ignore
-                    pass
-    except Exception:
-        # If database is not reachable, we just continue and show the normal warning below.
-        pass
-
+    # Ensure database is initialized before any queries
+    ensure_database_initialized()
+    
     st.title("📰 NOS Nieuws Aggregator")
     st.markdown("---")
     
