@@ -4,7 +4,27 @@
 
 Before deploying to Streamlit Cloud, test locally:
 
-### Step 1: Activate Virtual Environment
+### Quick Setup (Recommended)
+
+**Windows:**
+```powershell
+.\setup_local.bat
+```
+
+**Mac/Linux:**
+```bash
+chmod +x setup_local.sh
+./setup_local.sh
+```
+
+This will automatically:
+- Activate/create virtual environment
+- Install all dependencies
+- Show you next steps
+
+### Manual Setup
+
+If you prefer to set up manually:
 
 **Windows (PowerShell):**
 ```powershell
@@ -55,17 +75,44 @@ python manage.py ingest_nos --max-items 100
 
 ### Step 5: Run Streamlit App
 
+**IMPORTANT**: Make sure your virtual environment is activated first!
+
+**Option 1: Use the PowerShell script (Easiest - Windows):**
+```powershell
+.\run_streamlit.ps1
+```
+
+**Option 2: Manual activation and run:**
+```powershell
+# Activate virtual environment
+.\venv\Scripts\Activate.ps1
+
+# Run Streamlit
+python -m streamlit run streamlit_app.py
+```
+
+**Option 3: Using streamlit command directly (if venv is activated):**
 ```bash
 streamlit run streamlit_app.py
 ```
 
 The app will automatically open in your browser at `http://localhost:8501`
 
+**Note**: If you get "streamlit is not recognized", make sure:
+1. Virtual environment is activated (you should see `(venv)` in your prompt)
+2. Streamlit is installed: `pip install streamlit`
+
 ### Troubleshooting Local Setup
+
+**Error: "streamlit is not recognized" or "streamlit: The term 'streamlit' is not recognized":**
+- **Solution**: Your virtual environment is not activated
+- Activate it first: `.\venv\Scripts\Activate.ps1` (Windows PowerShell)
+- Then use: `python -m streamlit run streamlit_app.py`
+- Or use the provided script: `.\run_streamlit.ps1`
 
 **Error: "No module named 'dotenv'" or similar:**
 - Make sure your virtual environment is activated
-- Run `pip install -r requirements.txt` again
+- Run `pip install python-dotenv` or `pip install -r requirements.txt`
 
 **Error: "ModuleNotFoundError: No module named 'celery'":**
 - This should be fixed now, but if it persists, make sure all dependencies are installed
@@ -77,6 +124,11 @@ The app will automatically open in your browser at `http://localhost:8501`
 
 **Error: "No categories found":**
 - Run `python manage.py init_categories`
+
+**Error: psycopg2-binary installation fails:**
+- This is OK for local testing with SQLite
+- PostgreSQL is only needed for production deployment
+- You can skip it: `pip install streamlit pytz python-dotenv` (without psycopg2)
 
 ## Deploy to Streamlit Cloud
 

@@ -3,7 +3,16 @@ Django settings for news aggregation project.
 """
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+
+# Optional: load environment variables from .env if python-dotenv is installed.
+# This makes the project more robust when running in environments (like Streamlit)
+# where python-dotenv may not be available or a different Python interpreter is used.
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(*args, **kwargs):
+        """Fallback no-op if python-dotenv is not installed."""
+        return None
 
 load_dotenv()
 
