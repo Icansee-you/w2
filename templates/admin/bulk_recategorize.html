@@ -1,0 +1,39 @@
+{% extends 'admin/base_site.html' %}
+
+{% block content %}
+<h1>Herschik categorisatie voor {{ article_count }} artikelen</h1>
+
+<div style="margin-bottom: 2rem;">
+    <h2>Geselecteerde artikelen:</h2>
+    <ul>
+        {% for article in articles %}
+            <li>{{ article.title }}</li>
+        {% endfor %}
+    </ul>
+</div>
+
+<form method="post">
+    {% csrf_token %}
+    
+    <div style="margin-bottom: 1.5rem;">
+        <label for="category" style="display: block; margin-bottom: 0.5rem; font-weight: bold;">
+            Nieuwe categorie:
+        </label>
+        <select name="category" id="category" required style="padding: 0.5rem; font-size: 1rem; min-width: 200px;">
+            <option value="">-- Kies een categorie --</option>
+            {% for category in categories %}
+                <option value="{{ category.id }}">{{ category.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    
+    <input type="hidden" name="apply" value="1" />
+    <button type="submit" name="apply" style="padding: 0.75rem 1.5rem; background-color: #417690; color: white; border: none; border-radius: 4px; cursor: pointer;">
+        Categorisatie toepassen
+    </button>
+    <a href="{% url 'admin:news_article_changelist' %}" style="margin-left: 1rem; padding: 0.75rem 1.5rem; background-color: #ba2121; color: white; text-decoration: none; border-radius: 4px; display: inline-block;">
+        Annuleren
+    </a>
+</form>
+{% endblock %}
+
