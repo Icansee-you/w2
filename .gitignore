@@ -44,3 +44,7 @@ htmlcov/
 # Streamlit
 .streamlit/secrets.toml
 
+# Local testing files
+local_test.db
+local_preferences.json
+

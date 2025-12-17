@@ -112,24 +112,14 @@ st.markdown("""
         margin: 0.5rem 0;
     }
     
-    .categories-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-        margin: 0.5rem 0;
-    }
-    
     .article-category {
         display: inline-block;
         background-color: #e3f2fd;
         color: #1976d2;
-        padding: 0.4rem 0.8rem;
+        padding: 0.25rem 0.75rem;
         border-radius: 12px;
-        font-size: 0.9rem;
-        white-space: nowrap;
-        margin: 0;
-        word-break: keep-all;
-        overflow-wrap: normal;
+        font-size: 0.8rem;
+        margin: 0.25rem 0.25rem 0.25rem 0;
     }
     
     .eli5-box {
@@ -212,57 +202,26 @@ def render_horizontal_menu():
     """Render horizontal navigation menu."""
     menu_html = """
     <div class="horizontal-menu">
-        <a class="menu-item" href="?page=Nieuws" onclick="window.location.href='?page=Nieuws'; return false;" target="_self">Nieuws</a>
-        <a class="menu-item" href="?page=Waarom" onclick="window.location.href='?page=Waarom'; return false;" target="_self">Waarom?</a>
-        <a class="menu-item" href="?page=Frustrate" onclick="window.location.href='?page=Frustrate'; return false;" target="_self">Frustrate yourself</a>
-        <a class="menu-item" href="?page=Gebruiker" onclick="window.location.href='?page=Gebruiker'; return false;" target="_self">Gebruiker</a>
+        <a class="menu-item" href="?page=Nieuws" onclick="window.location.href='?page=Nieuws'; return false;">Nieuws</a>
+        <a class="menu-item" href="?page=Waarom" onclick="window.location.href='?page=Waarom'; return false;">Waarom?</a>
+        <a class="menu-item" href="?page=Gebruiker" onclick="window.location.href='?page=Gebruiker'; return false;">Gebruiker</a>
     </div>
     """
     st.markdown(menu_html, unsafe_allow_html=True)
     
     # Update current page from query params
     page = st.query_params.get("page", "Nieuws")
-    if page in ["Nieuws", "Waarom", "Frustrate", "Gebruiker"]:
+    if page in ["Nieuws", "Waarom", "Gebruiker"]:
         st.session_state.current_page = page
 
 
 def strip_html_tags(text: str) -> str:
-    """Remove HTML tags from text (for summary extraction)."""
+    """Remove HTML tags from text."""
     if not text:
         return ""
     text = re.sub(r'<[^>]+>', '', text)
     text = unescape(text)
     text = re.sub(r'\s+', ' ', text)
-    return text.strip()
-
-
-def clean_html_for_display(text: str) -> str:
-    """Clean HTML but preserve formatting tags like <p>, <br>, <strong>, <em>."""
-    if not text:
-        return ""
-    
-    # Unescape HTML entities
-    text = unescape(text)
-    
-    # Remove dangerous/script tags but keep formatting tags
-    # Keep: p, br, strong, em, b, i, u, h1-h6, ul, ol, li, blockquote, a
-    # Remove: script, style, iframe, object, embed, form, input, button
-    dangerous_tags = ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'onclick', 'onerror']
-    
-    for tag in dangerous_tags:
-        # Remove opening and closing tags
-        text = re.sub(rf'<{tag}[^>]*>.*?</{tag}>', '', text, flags=re.IGNORECASE | re.DOTALL)
-        # Remove self-closing tags
-        text = re.sub(rf'<{tag}[^>]*/?>', '', text, flags=re.IGNORECASE)
-    
-    # Remove onclick and other event handlers from remaining tags
-    text = re.sub(r'\s+on\w+="[^"]*"', '', text, flags=re.IGNORECASE)
-    text = re.sub(r"\s+on\w+='[^']*'", '', text, flags=re.IGNORECASE)
-    
-    # Clean up multiple spaces but preserve line breaks from <br> and <p>
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
-    
     return text.strip()
 
 
@@ -322,42 +281,58 @@ def ensure_eli5_summary(article: Dict[str, Any], supabase) -> Dict[str, Any]:
 
 
 def render_article_card(article: Dict[str, Any], supabase):
-    """Render a single article card (overview - only image and summary)."""
-    article_id = article['id']
+    """Render a single article card with auto-generated ELI5."""
+    # Ensure ELI5 summary exists
+    article = ensure_eli5_summary(article, supabase)
     
-    # Image (clickable) - stays in same window
+    # Image
     if article.get('image_url'):
         try:
-            # Use HTML with onclick that updates query params (stays in same window)
-            # window.location.search stays in the same window
-            image_html = f"""
-            <div class="clickable-image-container" 
-                 onclick="window.location.search = '?article={article_id}'; return false;" 
-                 style="cursor: pointer; margin-bottom: 0.5rem;">
-                <img src="{article['image_url']}" 
-                     style="width: 100%; height: auto; border-radius: 4px; display: block;" 
-                     alt="Click to view article" />
-            </div>
-            """
-            st.markdown(image_html, unsafe_allow_html=True)
+            st.image(article['image_url'], use_container_width=True)
         except:
-            # Fallback: just show image
-            try:
-                st.image(article['image_url'], use_container_width=True)
-            except:
-                pass
+            pass
     
     # Title (clickable)
     title = article.get('title', 'Geen titel')
-    if st.button(title[:70] + "..." if len(title) > 70 else title, key=f"article_{article_id}", use_container_width=True):
-        st.query_params["article"] = article_id
+    if st.button(title[:70] + "..." if len(title) > 70 else title, key=f"article_{article['id']}", use_container_width=True):
+        st.query_params["article"] = article['id']
         st.rerun()
     
-    # Summary (2 sentences) - only this on overview
+    # Category badges
+    categories = article.get('categories', [])
+    if categories:
+        for cat in categories[:3]:  # Show max 3 categories
+            st.markdown(f'<span class="article-category">{cat}</span>', unsafe_allow_html=True)
+    
+    # Date
+    if article.get('published_at'):
+        date_str = format_datetime(article['published_at'])
+        st.caption(date_str)
+    
+    # Summary (2 sentences)
     description = article.get('description', '')
     if description:
         summary = get_summary_sentences(description, num_sentences=2)
         st.markdown(f'<div class="article-summary">{summary}</div>', unsafe_allow_html=True)
+    
+    # ELI5 Summary (automatically shown)
+    if article.get('eli5_summary_nl'):
+        llm_name = article.get('eli5_llm', 'Onbekend')
+        llm_display = {
+            'ChatLLM': 'ChatLLM (Aitomatic)',
+            'Groq': 'Groq',
+            'HuggingFace': 'Hugging Face',
+            'OpenAI': 'OpenAI',
+            'Simple': 'Eenvoudige extractie'
+        }.get(llm_name, llm_name)
+        
+        st.markdown(f"""
+        <div class="eli5-box">
+            <div class="eli5-title">📚 Leg uit alsof ik 5 ben:</div>
+            {article['eli5_summary_nl']}
+            <div class="eli5-llm-badge">Gegenereerd met: {llm_display}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 def render_article_detail(article_id: str):
@@ -393,82 +368,20 @@ def render_article_detail(article_id: str):
     
     st.markdown("---")
     
-    # Image (clickable - redirects to article)
+    # Image
     if article.get('image_url'):
         col_left, col_img, col_right = st.columns([1, 2, 1])
         with col_img:
-            # Make image clickable
-            article_id = article['id']
-            image_html = f"""
-            <div class="clickable-image-container" 
-                 onclick="window.location.search = '?article={article_id}'; return false;" 
-                 style="cursor: pointer;">
-                <img src="{article['image_url']}" 
-                     style="width: 100%; height: auto; border-radius: 4px; display: block; max-width: 50%;" 
-                     alt="Click to view article" />
-            </div>
-            """
-            st.markdown(image_html, unsafe_allow_html=True)
-    
-    # Categories (on detail page)
-    categories = article.get('categories', [])
-    
-    # Handle categories if they're stored as a string (JSON) or list
-    if isinstance(categories, str):
-        try:
-            import json
-            categories = json.loads(categories)
-        except:
-            # If it's a string but not JSON, try to parse it manually
-            if categories.strip().startswith('['):
-                # Remove brackets and split by comma
-                categories = [c.strip().strip('"\'') for c in categories.strip('[]').split(',') if c.strip()]
-            else:
-                categories = []
-    
-    # Ensure categories is a list
-    if not isinstance(categories, list):
-        categories = []
-    
-    if categories and len(categories) > 0:
-        st.subheader("Categorieën")
-        # Display categories in a horizontal flex container
-        # Use proper HTML escaping for category names
-        from html import escape
-        categories_html = '<div class="categories-container">'
-        for cat in categories:
-            if cat:  # Only add non-empty categories
-                escaped_cat = escape(str(cat))
-                categories_html += f'<span class="article-category">{escaped_cat}</span>'
-        categories_html += '</div>'
-        st.markdown(categories_html, unsafe_allow_html=True)
-        
-        # Show which LLM was used for categorization
-        categorization_llm = article.get('categorization_llm', 'Keywords')
-        if categorization_llm and categorization_llm != 'Keywords':
-            llm_display = {
-                'Hugging Face': 'Hugging Face',
-                'Groq': 'Groq',
-                'OpenAI': 'OpenAI',
-                'ChatLLM': 'ChatLLM (Aitomatic)'
-            }.get(categorization_llm, categorization_llm)
-            st.caption(f"📊 Categorisatie door: {llm_display}")
-        else:
-            st.caption("📊 Categorisatie door: Keywords (geen LLM)")
-        
-        st.markdown("---")
+            st.image(article['image_url'], use_container_width=True)
     
     # Description
     if article.get('description'):
         st.subheader("Samenvatting")
-        clean_description = clean_html_for_display(article['description'])
-        st.markdown(clean_description, unsafe_allow_html=True)
+        clean_description = strip_html_tags(article['description'])
+        st.markdown(clean_description)
         st.markdown("---")
     
-    # ELI5 Summary (automatically shown on detail page)
-    # Ensure ELI5 exists
-    article = ensure_eli5_summary(article, supabase)
-    
+    # ELI5 Summary (automatically shown)
     if article.get('eli5_summary_nl'):
         llm_name = article.get('eli5_llm', 'Onbekend')
         llm_display = {
@@ -487,16 +400,12 @@ def render_article_detail(article_id: str):
         </div>
         """, unsafe_allow_html=True)
         st.markdown("---")
-    else:
-        # Show message if ELI5 generation failed
-        st.info("⚠️ Eenvoudige uitleg kon niet worden gegenereerd. Probeer het later opnieuw.")
-        st.markdown("---")
     
     # Full content
     if article.get('full_content'):
         st.subheader("Volledige inhoud")
-        clean_content = clean_html_for_display(article['full_content'])
-        st.markdown(clean_content, unsafe_allow_html=True)
+        clean_content = strip_html_tags(article['full_content'])
+        st.markdown(clean_content)
     
     # Source link
     st.markdown("---")
@@ -530,136 +439,46 @@ def render_nieuws_page():
     
     st.markdown("---")
     
-    # Action buttons
-    col1, col2 = st.columns(2)
-    with col1:
-        refresh_clicked = st.button("🔄 Artikelen Vernieuwen", use_container_width=True)
-    with col2:
-        recategorize_clicked = st.button("🏷️ Alle Artikelen Her-categoriseren", use_container_width=True)
-    
-    # Handle refresh button
-    if refresh_clicked:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        feed_urls = [
-            'https://feeds.nos.nl/nosnieuwsalgemeen',
-            'https://feeds.nos.nl/nosnieuwsbinnenland',
-            'https://feeds.nos.nl/nosnieuwsbuitenland',
-        ]
-        
-        total_inserted = 0
-        total_updated = 0
-        total_skipped = 0
-        
-        for idx, feed_url in enumerate(feed_urls):
-            status_text.text(f"Feed {idx + 1}/{len(feed_urls)} ophalen...")
-            progress_bar.progress((idx) / len(feed_urls))
-            
-            try:
-                # Use LLM categorization for better accuracy
-                result = fetch_and_upsert_articles(feed_url, max_items=30, use_llm_categorization=True)
+    # Refresh button
+    if st.button("🔄 Artikelen Vernieuwen", use_container_width=True):
+        with st.spinner("Artikelen ophalen..."):
+            feed_urls = [
+                'https://feeds.nos.nl/nosnieuwsalgemeen',
+                'https://feeds.nos.nl/nosnieuwsbinnenland',
+                'https://feeds.nos.nl/nosnieuwsbuitenland',
+            ]
+            total_inserted = 0
+            total_updated = 0
+            for feed_url in feed_urls:
+                result = fetch_and_upsert_articles(feed_url, max_items=30)
                 if result.get('success'):
                     total_inserted += result.get('inserted', 0)
                     total_updated += result.get('updated', 0)
-                    total_skipped += result.get('skipped', 0)
-                else:
-                    st.warning(f"Fout bij feed {feed_url}: {result.get('error', 'Onbekende fout')}")
-            except Exception as e:
-                st.error(f"Fout bij verwerken van feed: {str(e)[:200]}")
-                total_skipped += 1
-        
-        progress_bar.progress(1.0)
-        status_text.text("Klaar!")
-        
-        if total_inserted > 0 or total_updated > 0:
-            st.success(f"✅ {total_inserted} nieuwe artikelen, {total_updated} bijgewerkt")
-            if total_skipped > 0:
-                st.info(f"ℹ️ {total_skipped} artikelen overgeslagen")
-        else:
-            st.info("Geen nieuwe artikelen gevonden")
-        
-        # Small delay to show progress
-        import time
-        time.sleep(0.5)
-        st.rerun()
-    
-    # Handle recategorize button
-    if recategorize_clicked:
-        from articles_repository import recategorize_all_articles
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        status_text.text("Artikelen ophalen...")
-        progress_bar.progress(0.1)
-        
-        # Recategorize using LLM
-        status_text.text("Artikelen her-categoriseren met LLM...")
-        progress_bar.progress(0.3)
-        
-        result = recategorize_all_articles(limit=None, use_llm=True)
-        
-        progress_bar.progress(1.0)
-        
-        if result.get('success'):
-            processed = result.get('processed', 0)
-            updated = result.get('updated', 0)
-            errors = result.get('errors', 0)
             
-            status_text.text("Klaar!")
-            
-            if updated > 0:
-                st.success(f"✅ {updated} artikelen her-categoriseerd!")
-                if errors > 0:
-                    st.warning(f"⚠️ {errors} fouten opgetreden")
+            if total_inserted > 0 or total_updated > 0:
+                st.success(f"✅ {total_inserted} nieuwe artikelen, {total_updated} bijgewerkt")
             else:
-                st.info("Geen artikelen gevonden om te her-categoriseren")
-        else:
-            st.error(f"Fout: {result.get('error', 'Onbekende fout')}")
-        
-        import time
-        time.sleep(2)
-        st.rerun()
+                st.info("Geen nieuwe artikelen gevonden")
+            st.rerun()
     
     # Get user preferences
     blacklist = []
     selected_categories = None
-    if st.session_state.user:
-        # Load preferences if not already loaded
-        if st.session_state.preferences is None:
-            st.session_state.preferences = supabase.get_user_preferences(st.session_state.user['id'])
-        
-        if st.session_state.preferences:
-            blacklist = st.session_state.preferences.get('blacklist_keywords', [])
-            selected_categories = st.session_state.preferences.get('selected_categories')
-    
-    # Debug: Show blacklist if in debug mode
-    if st.session_state.get('debug_mode', False):
-        if blacklist:
-            st.info(f"🔍 Debug: Blacklist actief: {', '.join(blacklist)}")
-        else:
-            st.info("🔍 Debug: Geen blacklist actief")
+    if st.session_state.user and st.session_state.preferences:
+        blacklist = st.session_state.preferences.get('blacklist_keywords', [])
+        selected_categories = st.session_state.preferences.get('selected_categories')
     
     # Get articles
     category = None if category_filter == "Alle" else category_filter
     try:
         categories_filter = selected_categories if (st.session_state.user and selected_categories) else None
         
-        # Ensure blacklist is properly formatted
-        blacklist_to_use = None
-        if blacklist and isinstance(blacklist, list) and len(blacklist) > 0:
-            # Filter out empty strings and normalize
-            blacklist_to_use = [kw.strip() for kw in blacklist if kw and kw.strip()]
-            if len(blacklist_to_use) == 0:
-                blacklist_to_use = None
-        
         articles = supabase.get_articles(
             limit=50,
             category=category,
             categories=categories_filter,
             search_query=search_query if search_query else None,
-            blacklist_keywords=blacklist_to_use
+            blacklist_keywords=blacklist if blacklist else None
         )
     except Exception as e:
         st.error(f"Fout bij ophalen artikelen: {str(e)}")
@@ -705,98 +524,6 @@ def render_waarom_page():
     - Persoonlijke voorkeuren worden gerespecteerd
     - Geen informatie-overload, alleen wat jij wilt zien
     """)
-
-
-def render_frustrate_page():
-    """Render 'Frustrate yourself' page showing filtered articles."""
-    supabase = st.session_state.supabase
-    
-    st.title("😤 Frustrate yourself")
-    st.markdown("---")
-    st.markdown("**Deze pagina toont alle artikelen die door de blacklist filter zijn uitgefilterd.**")
-    st.markdown("Gebruik dit om te testen of de categorisatie en keyword filters correct werken.")
-    st.markdown("---")
-    
-    # Check if user is logged in
-    if not st.session_state.user:
-        st.warning("⚠️ Je moet ingelogd zijn om deze pagina te gebruiken.")
-        st.info("Ga naar de 'Gebruiker' pagina om in te loggen.")
-        return
-    
-    # Load preferences if not already loaded
-    if st.session_state.preferences is None:
-        st.session_state.preferences = supabase.get_user_preferences(st.session_state.user['id'])
-    
-    # Get user preferences to know what was filtered
-    blacklist = []
-    if st.session_state.preferences:
-        blacklist = st.session_state.preferences.get('blacklist_keywords', [])
-    
-    # Debug info
-    if st.session_state.get('debug_mode', False):
-        st.write(f"Debug - User ID: {st.session_state.user.get('id', 'N/A')}")
-        st.write(f"Debug - Preferences loaded: {st.session_state.preferences is not None}")
-        if st.session_state.preferences:
-            st.write(f"Debug - Preferences keys: {list(st.session_state.preferences.keys())}")
-            st.write(f"Debug - Blacklist from prefs: {st.session_state.preferences.get('blacklist_keywords', 'NOT FOUND')}")
-    
-    if blacklist and len(blacklist) > 0:
-        st.info(f"**Actieve blacklist ({len(blacklist)} trefwoorden):** {', '.join(blacklist)}")
-    else:
-        st.warning("⚠️ Geen blacklist ingesteld. Ga naar de 'Gebruiker' pagina en voeg trefwoorden toe aan je blacklist om uitgefilterde artikelen te zien.")
-        st.markdown("---")
-        return
-    
-    st.markdown("---")
-    
-    # Get ALL articles without blacklist filter
-    try:
-        all_articles = supabase.get_articles(
-            limit=200,  # Get more articles
-            blacklist_keywords=None  # No blacklist filter - get everything
-        )
-        
-        # Now manually filter to find articles that WOULD be filtered
-        filtered_articles = []
-        if blacklist:
-            for article in all_articles:
-                title = (article.get('title') or '').lower()
-                description = (article.get('description') or '').lower()
-                full_content = (article.get('full_content') or '').lower()
-                
-                all_text = f"{title} {description} {full_content}"
-                
-                # Check if article contains any blacklisted keyword
-                for keyword in blacklist:
-                    keyword_lower = keyword.lower().strip()
-                    if keyword_lower and keyword_lower in all_text:
-                        filtered_articles.append(article)
-                        break  # Only add once even if multiple keywords match
-        
-        if filtered_articles:
-            st.subheader(f"📋 {len(filtered_articles)} uitgefilterde artikelen")
-            st.caption("Deze artikelen worden normaal gesproken verborgen door je blacklist.")
-            st.markdown("---")
-            
-            # Display filtered articles
-            articles_list = filtered_articles
-            num_cols = 4
-            
-            for row_start in range(0, len(articles_list), num_cols):
-                cols = st.columns(num_cols)
-                for col_idx, col in enumerate(cols):
-                    article_idx = row_start + col_idx
-                    if article_idx < len(articles_list):
-                        with col:
-                            render_article_card(articles_list[article_idx], supabase)
-        else:
-            st.success("✅ Geen artikelen gevonden die door de blacklist worden uitgefilterd.")
-            st.info("Dit betekent dat er momenteel geen artikelen zijn die je blacklist trefwoorden bevatten.")
-    
-    except Exception as e:
-        st.error(f"Fout bij ophalen artikelen: {str(e)}")
-        import traceback
-        st.code(traceback.format_exc())
 
 
 def render_gebruiker_page():
@@ -942,8 +669,6 @@ def main():
         render_nieuws_page()
     elif page == "Waarom":
         render_waarom_page()
-    elif page == "Frustrate":
-        render_frustrate_page()
     elif page == "Gebruiker":
         render_gebruiker_page()
 
