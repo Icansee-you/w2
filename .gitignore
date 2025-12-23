@@ -48,3 +48,6 @@ htmlcov/
 local_test.db
 local_preferences.json
 
+# Background scheduler state
+.last_fetch_time
+

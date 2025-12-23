@@ -28,16 +28,29 @@ class SupabaseClient:
                 "SUPABASE_URL and SUPABASE_ANON_KEY must be set in environment variables"
             )
         
-        options = ClientOptions(
-            auto_refresh_token=True,
-            persist_session=True
-        ) if ClientOptions else None
-        
-        self.client: Client = create_client(
-            supabase_url,
-            supabase_key,
-            options=options
-        )
+        # Try to create client with options, fallback to simple initialization
+        try:
+            if ClientOptions:
+                options = ClientOptions(
+                    auto_refresh_token=True,
+                    persist_session=True
+                )
+                self.client: Client = create_client(
+                    supabase_url,
+                    supabase_key,
+                    options=options
+                )
+            else:
+                self.client: Client = create_client(
+                    supabase_url,
+                    supabase_key
+                )
+        except (AttributeError, TypeError) as e:
+            # If ClientOptions has issues, use simple initialization
+            self.client: Client = create_client(
+                supabase_url,
+                supabase_key
+            )
     
     # Authentication methods
     def sign_up(self, email: str, password: str) -> Dict[str, Any]:
@@ -192,14 +205,8 @@ class SupabaseClient:
         try:
             query = self.client.table('articles').select('*')
             
-            if category:
-                query = query.eq('category', category)
-            
-            # Filter by categories array (if any category in the list matches)
-            if categories:
-                # Supabase supports array overlap with 'cs' (contains) operator
-                # We'll filter in Python for better compatibility
-                pass  # Will filter after fetching
+            # Don't filter by category in SQL - we'll filter in Python to check both
+            # category field and categories array
             
             # Note: Supabase doesn't support complex OR queries easily
             # We'll filter search results in Python if needed
@@ -208,13 +215,58 @@ class SupabaseClient:
             response = query.execute()
             articles = response.data if response.data else []
             
-            # Filter by categories array (if provided)
-            if categories:
+            # Filter by category (check both category field and categories array)
+            if category:
                 filtered = []
                 for article in articles:
+                    article_category = article.get('category', '')
                     article_categories = article.get('categories', []) or []
-                    # Check if any of the requested categories match
-                    if any(cat in article_categories for cat in categories):
+                    # Check if category matches either the single category field or is in the array
+                    if article_category == category or category in article_categories:
+                        filtered.append(article)
+                articles = filtered
+            
+            # Filter by categories array (if provided)
+            # Logic: Article is INCLUDED ONLY if ALL its categories are in the selected list
+            # If ANY category is NOT in the selected list, filter it out
+            # Special case: If categories is empty/None, don't filter (show all)
+            if categories and len(categories) > 0:
+                filtered = []
+                categories_lower = [cat.lower().strip() for cat in categories if cat]
+                # Import valid categories list
+                from categorization_engine import CATEGORIES
+                valid_categories_lower = [cat.lower().strip() for cat in CATEGORIES]
+                
+                for article in articles:
+                    # Collect all categories from the article (only valid ones)
+                    article_cats = []
+                    article_category = article.get('category', '')
+                    # Only add if it's a valid category
+                    if article_category and article_category.lower().strip() in valid_categories_lower:
+                        article_cats.append(article_category)
+                    article_categories_array = article.get('categories', []) or []
+                    if article_categories_array:
+                        for cat in article_categories_array:
+                            if cat and cat.lower().strip() in valid_categories_lower:
+                                article_cats.append(cat)
+                    article_cats = [cat for cat in article_cats if cat]
+                    article_cats = list(set(article_cats))  # Remove duplicates
+                    
+                    # If article has no categories, include it
+                    if not article_cats:
+                        filtered.append(article)
+                        continue
+                    
+                    # Check if ALL article categories are in the selected list
+                    # If ANY category is NOT in the list, filter it out
+                    # Case-insensitive comparison
+                    all_match = True
+                    for cat in article_cats:
+                        if cat and cat.lower().strip() not in categories_lower:
+                            all_match = False
+                            break
+                    
+                    if all_match:
                         filtered.append(article)
                 articles = filtered
             
@@ -258,7 +310,9 @@ class SupabaseClient:
             
             return articles
         except Exception as e:
+            import traceback
             print(f"Error getting articles: {e}")
+            traceback.print_exc()
             return []
     
     def get_article_by_id(self, article_id: str) -> Optional[Dict[str, Any]]:

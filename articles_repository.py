@@ -105,26 +105,26 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = False
             # Use LLM categorization (slower, but more accurate)
             categorization_result = categorize_article(title, description, content or '')
             if isinstance(categorization_result, dict):
-                categories = categorization_result.get('categories', [])
+                categories = categorization_result.get('categories', [])[:3]  # Limit to 3
                 categorization_llm = categorization_result.get('llm', 'Keywords')
             else:
                 # Backward compatibility
-                categories = categorization_result if isinstance(categorization_result, list) else []
+                categories = (categorization_result if isinstance(categorization_result, list) else [])[:3]  # Limit to 3
                 categorization_llm = 'Keywords'
         except Exception as e:
             print(f"LLM categorization failed, using keywords: {e}")
             from categorization_engine import _categorize_with_keywords
-            categories = _categorize_with_keywords(title, description, content or '')
+            categories = _categorize_with_keywords(title, description, content or '')[:3]  # Limit to 3
             categorization_llm = 'Keywords'
     else:
         # Use fast keyword matching (non-blocking)
         try:
             from categorization_engine import _categorize_with_keywords
-            categories = _categorize_with_keywords(title, description, content or '')
+            categories = _categorize_with_keywords(title, description, content or '')[:3]  # Limit to 3
             categorization_llm = 'Keywords'
         except Exception:
             # Fallback to simple category
-            categories = [category] if category else []
+            categories = ([category] if category else [])[:3]  # Limit to 3
             categorization_llm = 'Keywords'
     
     return {
@@ -290,13 +290,14 @@ def generate_missing_eli5_summaries(limit: int = 5) -> int:
     return generated_count
 
 
-def recategorize_all_articles(limit: int = None, use_llm: bool = True) -> Dict[str, Any]:
+def recategorize_all_articles(limit: int = None, use_llm: bool = True, progress_callback=None) -> Dict[str, Any]:
     """
     Recategorize all existing articles using LLM or keywords.
     
     Args:
-        limit: Maximum number of articles to recategorize (None for all)
+        limit: Maximum number of articles to recategorize (None for all, default: 50)
         use_llm: Whether to use LLM categorization (True) or keywords (False)
+        progress_callback: Optional callback function(processed, total, current_title) for progress updates
     
     Returns:
         Dict with counts of processed, updated, errors
@@ -304,22 +305,28 @@ def recategorize_all_articles(limit: int = None, use_llm: bool = True) -> Dict[s
     storage = get_supabase_client()
     
     try:
+        # Default limit to 50 to prevent hanging on large datasets
+        if limit is None:
+            limit = 50
+        
         # Get all articles
-        all_articles = storage.get_articles(limit=1000 if not limit else limit)
+        all_articles = storage.get_articles(limit=limit)
+        total_articles = len(all_articles) if all_articles else 0
         
         if not all_articles:
             return {
                 'success': True,
                 'processed': 0,
                 'updated': 0,
-                'errors': 0
+                'errors': 0,
+                'total': 0
             }
         
         processed = 0
         updated = 0
         errors = 0
         
-        for article in all_articles:
+        for idx, article in enumerate(all_articles, 1):
             try:
                 title = article.get('title') or ''
                 description = article.get('description') or ''
@@ -332,30 +339,51 @@ def recategorize_all_articles(limit: int = None, use_llm: bool = True) -> Dict[s
                     processed += 1
                     continue
                 
+                # Update progress
+                if progress_callback:
+                    progress_callback(processed, total_articles, title[:50])
+                
                 # Recategorize
                 if use_llm:
                     try:
+                        # Try categorization (has built-in timeout handling)
                         result = categorize_article(title, description, content)
-                        if isinstance(result, dict):
-                            new_categories = result.get('categories', [])
-                            categorization_llm = result.get('llm', 'Keywords')
+                        
+                        if result:
+                            if isinstance(result, dict):
+                                new_categories = result.get('categories', [])[:3]  # Limit to 3
+                                categorization_llm = result.get('llm', 'Keywords')
+                            else:
+                                new_categories = (result if isinstance(result, list) else [])[:3]  # Limit to 3
+                                categorization_llm = 'Keywords'
                         else:
-                            new_categories = result if isinstance(result, list) else []
+                            # Fall back to keywords if LLM failed
+                            from categorization_engine import _categorize_with_keywords
+                            new_categories = _categorize_with_keywords(title, description, content)[:3]  # Limit to 3
                             categorization_llm = 'Keywords'
+                    except TimeoutError:
+                        print(f"  ⚠️ LLM categorization timeout for article {article.get('id', 'unknown')}")
+                        # Fall back to keywords
+                        from categorization_engine import _categorize_with_keywords
+                        new_categories = _categorize_with_keywords(title, description, content)[:3]  # Limit to 3
+                        categorization_llm = 'Keywords'
                     except Exception as llm_error:
                         print(f"  ⚠️ LLM categorization failed for article {article.get('id', 'unknown')}: {llm_error}")
                         # Fall back to keywords
                         from categorization_engine import _categorize_with_keywords
-                        new_categories = _categorize_with_keywords(title, description, content)
+                        new_categories = _categorize_with_keywords(title, description, content)[:3]  # Limit to 3
                         categorization_llm = 'Keywords'
                 else:
                     from categorization_engine import _categorize_with_keywords
-                    new_categories = _categorize_with_keywords(title, description, content)
+                    new_categories = _categorize_with_keywords(title, description, content)[:3]  # Limit to 3
                     categorization_llm = 'Keywords'
                 
                 # Ensure we have at least one category
                 if not new_categories:
                     new_categories = ['binnenland']  # Default category
+                
+                # Limit to maximum 3 categories
+                new_categories = new_categories[:3]
                 
                 # Update article
                 article['categories'] = new_categories
@@ -378,7 +406,8 @@ def recategorize_all_articles(limit: int = None, use_llm: bool = True) -> Dict[s
             'success': True,
             'processed': processed,
             'updated': updated,
-            'errors': errors
+            'errors': errors,
+            'total': total_articles
         }
         
     except Exception as e:
@@ -388,5 +417,158 @@ def recategorize_all_articles(limit: int = None, use_llm: bool = True) -> Dict[s
             'processed': 0,
             'updated': 0,
             'errors': 0
+        }
+
+
+def recategorize_articles_without_llm(limit: int = 50, progress_callback=None) -> Dict[str, Any]:
+    """
+    Recategorize articles that don't have LLM-based categorization.
+    Only processes articles where categorization_llm is 'Keywords' or None.
+    Only runs if an LLM is available.
+    
+    Args:
+        limit: Maximum number of articles to recategorize (default: 50)
+        progress_callback: Optional callback function(processed, total, current_title) for progress updates
+    
+    Returns:
+        Dict with counts of processed, updated, errors, skipped
+    """
+    from categorization_engine import is_llm_available, categorize_article
+    
+    # Check if LLM is available
+    if not is_llm_available():
+        return {
+            'success': False,
+            'error': 'Geen LLM beschikbaar. Configureer een LLM API key (Groq, Hugging Face, OpenAI, of ChatLLM).',
+            'processed': 0,
+            'updated': 0,
+            'errors': 0,
+            'skipped': 0,
+            'total': 0
+        }
+    
+    storage = get_supabase_client()
+    
+    try:
+        # Get all articles
+        all_articles = storage.get_articles(limit=500)  # Get more to filter
+        
+        if not all_articles:
+            return {
+                'success': True,
+                'processed': 0,
+                'updated': 0,
+                'errors': 0,
+                'skipped': 0,
+                'total': 0
+            }
+        
+        # Filter articles that need LLM categorization
+        articles_to_recategorize = []
+        for article in all_articles:
+            categorization_llm = article.get('categorization_llm', 'Keywords')
+            # Only recategorize if it was categorized with keywords or has no LLM
+            if categorization_llm in [None, 'Keywords', '']:
+                articles_to_recategorize.append(article)
+        
+        total_to_process = min(len(articles_to_recategorize), limit)
+        
+        if total_to_process == 0:
+            return {
+                'success': True,
+                'processed': 0,
+                'updated': 0,
+                'errors': 0,
+                'skipped': len(all_articles) - len(articles_to_recategorize),
+                'total': len(all_articles),
+                'message': 'Alle artikelen hebben al LLM-categorisatie.'
+            }
+        
+        processed = 0
+        updated = 0
+        errors = 0
+        
+        for idx, article in enumerate(articles_to_recategorize[:limit], 1):
+            try:
+                title = article.get('title') or ''
+                description = article.get('description') or ''
+                content = article.get('full_content') or ''
+                
+                # Ensure we have at least a title
+                if not title:
+                    errors += 1
+                    processed += 1
+                    continue
+                
+                # Update progress
+                if progress_callback:
+                    progress_callback(processed, total_to_process, title[:50])
+                
+                # Recategorize with LLM
+                try:
+                    result = categorize_article(title, description, content)
+                    
+                    if result:
+                        if isinstance(result, dict):
+                            new_categories = result.get('categories', [])[:3]  # Limit to 3
+                            categorization_llm = result.get('llm', 'Keywords')
+                        else:
+                            new_categories = (result if isinstance(result, list) else [])[:3]  # Limit to 3
+                            categorization_llm = 'Keywords'
+                    else:
+                        # If LLM failed, skip this article (don't update)
+                        errors += 1
+                        processed += 1
+                        continue
+                    
+                    # Only update if LLM was actually used (not Keywords)
+                    if categorization_llm and categorization_llm != 'Keywords':
+                        # Ensure we have at least one category
+                        if not new_categories:
+                            new_categories = ['binnenland']  # Default category
+                        
+                        # Limit to maximum 3 categories
+                        new_categories = new_categories[:3]
+                        
+                        # Update article
+                        article['categories'] = new_categories
+                        article['categorization_llm'] = categorization_llm
+                        
+                        if storage.upsert_article(article):
+                            updated += 1
+                        else:
+                            errors += 1
+                    else:
+                        # LLM wasn't actually used, skip
+                        errors += 1
+                        
+                except Exception as llm_error:
+                    # Skip articles where LLM fails
+                    errors += 1
+                
+                processed += 1
+                
+            except Exception as e:
+                errors += 1
+                processed += 1
+                continue
+        
+        return {
+            'success': True,
+            'processed': processed,
+            'updated': updated,
+            'errors': errors,
+            'skipped': len(all_articles) - len(articles_to_recategorize),
+            'total': len(all_articles)
+        }
+        
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'processed': 0,
+            'updated': 0,
+            'errors': 0,
+            'skipped': 0
         }
 

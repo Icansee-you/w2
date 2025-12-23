@@ -17,6 +17,44 @@ if (-not (Test-Path "venv\Scripts\Activate.ps1")) {
 Write-Host "Activating virtual environment..." -ForegroundColor Green
 & .\venv\Scripts\Activate.ps1
 
+# Set LLM API keys if not already set
+if (-not $env:CHATLLM_API_KEY) {
+    $env:CHATLLM_API_KEY = "s2_156073f76d354d72a6b0fb22c94a2f8d"
+    Write-Host "[INFO] ChatLLM API key set from script" -ForegroundColor Green
+} else {
+    Write-Host "[INFO] ChatLLM API key already set" -ForegroundColor Yellow
+}
+
+if (-not $env:GROQ_API_KEY) {
+    $env:GROQ_API_KEY = "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"
+    Write-Host "[INFO] Groq API key set from script" -ForegroundColor Green
+} else {
+    Write-Host "[INFO] Groq API key already set" -ForegroundColor Yellow
+}
+
+# Set Supabase credentials if not already set
+if (-not $env:SUPABASE_URL) {
+    $env:SUPABASE_URL = "https://skfizxuvxenrltqdwkha.supabase.co"
+    Write-Host "[INFO] Supabase URL set from script" -ForegroundColor Green
+} else {
+    Write-Host "[INFO] Supabase URL already set" -ForegroundColor Yellow
+}
+
+if (-not $env:SUPABASE_ANON_KEY) {
+    $env:SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNrZml6eHV2eGVucmx0cWR3a2hhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU5NTM2OTksImV4cCI6MjA4MTUyOTY5OX0.33ovbBa5MqxXokTPn-RB4C9s7sFG4OaRfl3Zuz0fR6Y"
+    Write-Host "[INFO] Supabase anon key set from script" -ForegroundColor Green
+} else {
+    Write-Host "[INFO] Supabase anon key already set" -ForegroundColor Yellow
+}
+
+# Check for Supabase credentials
+if ($env:SUPABASE_URL -and $env:SUPABASE_ANON_KEY) {
+    Write-Host "[INFO] Supabase credentials detected - using Supabase database" -ForegroundColor Green
+} else {
+    Write-Host "[INFO] No Supabase credentials - using local storage (SQLite)" -ForegroundColor Yellow
+    Write-Host "      To use Supabase, set SUPABASE_URL and SUPABASE_ANON_KEY environment variables" -ForegroundColor Cyan
+}
+
 # Check if streamlit is installed
 $streamlitCheck = python -m streamlit --version 2>&1
 if ($LASTEXITCODE -ne 0) {

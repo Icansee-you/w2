@@ -28,7 +28,7 @@ CATEGORIES = [
 ]
 
 # Maximum categories per article
-MAX_CATEGORIES = 20
+MAX_CATEGORIES = 3
 
 
 def categorize_article(title: str, description: str = "", content: str = "") -> Dict[str, Any]:
@@ -218,6 +218,8 @@ def _categorize_with_groq(text: str, title: str, api_key: str) -> Optional[List[
     """Categorize using Groq API."""
     try:
         import groq
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+        
         client = groq.Groq(api_key=api_key)
         
         categories_list = ", ".join(CATEGORIES)
@@ -257,26 +259,35 @@ Als geen specifieke categorie past, geef dan "binnenland" terug.
 
 Categorieën:"""
         
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Je bent een precieze assistent die nieuwsartikelen categoriseert. Wees zeer voorzichtig met sportcategorieën: 'Sport - Voetbal' is ALLEEN voor artikelen die specifiek over voetbal gaan, NIET voor algemene sport of andere sporten. Geef alleen de categorieën terug die echt van toepassing zijn, gescheiden door komma's."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            model="llama-3.1-8b-instant",
-            temperature=0.3,
-            max_tokens=100
-        )
+        def make_request():
+            return client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Je bent een precieze assistent die nieuwsartikelen categoriseert. Wees zeer voorzichtig met sportcategorieën: 'Sport - Voetbal' is ALLEEN voor artikelen die specifiek over voetbal gaan, NIET voor algemene sport of andere sporten. Geef alleen de categorieën terug die echt van toepassing zijn, gescheiden door komma's."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                model="llama-3.1-8b-instant",
+                temperature=0.3,
+                max_tokens=100
+            )
         
-        if chat_completion and chat_completion.choices and len(chat_completion.choices) > 0:
-            response = chat_completion.choices[0].message.content.strip()
-            if response:
-                return _parse_categories(response)
+        # Use ThreadPoolExecutor with timeout (30 seconds)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(make_request)
+            try:
+                chat_completion = future.result(timeout=30.0)
+                if chat_completion and chat_completion.choices and len(chat_completion.choices) > 0:
+                    response = chat_completion.choices[0].message.content.strip()
+                    if response:
+                        return _parse_categories(response)
+            except FutureTimeoutError:
+                print("Groq categorization timeout (30s)")
+                return None
         return None
     except Exception as e:
         print(f"Groq categorization error: {e}")
@@ -565,4 +576,14 @@ def _categorize_with_keywords(title: str, description: str, content: str) -> Lis
 def get_all_categories() -> List[str]:
     """Get list of all available categories."""
     return CATEGORIES.copy()
+
+
+def is_llm_available() -> bool:
+    """Check if any LLM API is available for categorization."""
+    hf_api_key = os.getenv('HUGGINGFACE_API_KEY')
+    groq_api_key = os.getenv('GROQ_API_KEY')
+    openai_api_key = os.getenv('OPENAI_API_KEY')
+    chatllm_api_key = os.getenv('CHATLLM_API_KEY')
+    
+    return bool(hf_api_key or groq_api_key or openai_api_key or chatllm_api_key)
 

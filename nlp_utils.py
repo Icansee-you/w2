@@ -258,6 +258,7 @@ def _generate_with_groq(text: str, title: str, api_key: str) -> Optional[str]:
     """Generate summary using Groq API (fast and free tier available)."""
     try:
         import groq
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
         
         client = groq.Groq(api_key=api_key)
         
@@ -271,24 +272,33 @@ Inhoud: {text[:2000]}
 
 Samenvatting:"""
         
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Je bent een vriendelijke assistent die nieuwsartikelen uitlegt aan kinderen van 5 jaar oud. Gebruik altijd heel eenvoudige Nederlandse woorden en korte zinnen. Leg namen en bedrijfsnamen met een hoofdletter uit in simpele woorden (behalve bekende landen zoals Nederland, Frankrijk)."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            model="llama-3.1-8b-instant",  # Free fast model
-            temperature=0.7,
-            max_tokens=150
-        )
+        def make_request():
+            return client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Je bent een vriendelijke assistent die nieuwsartikelen uitlegt aan kinderen van 5 jaar oud. Gebruik altijd heel eenvoudige Nederlandse woorden en korte zinnen. Leg namen en bedrijfsnamen met een hoofdletter uit in simpele woorden (behalve bekende landen zoals Nederland, Frankrijk)."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                model="llama-3.1-8b-instant",  # Free fast model
+                temperature=0.7,
+                max_tokens=150
+            )
         
-        summary = chat_completion.choices[0].message.content.strip()
-        return summary
+        # Use ThreadPoolExecutor with timeout (30 seconds)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(make_request)
+            try:
+                chat_completion = future.result(timeout=30.0)
+                summary = chat_completion.choices[0].message.content.strip()
+                return summary
+            except FutureTimeoutError:
+                print("Groq API timeout (30s)")
+                return None
     except ImportError:
         print("Groq library not installed. Install with: pip install groq")
     except Exception as e:

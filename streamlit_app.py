@@ -13,12 +13,20 @@ import pytz
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
+# Load environment variables from .env file if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed, skip .env loading
+
 import streamlit as st
 import re
 from html import unescape
 from supabase_client import get_supabase_client
 from articles_repository import fetch_and_upsert_articles, generate_missing_eli5_summaries
 from nlp_utils import generate_eli5_summary_nl_with_llm
+from background_scheduler import start_background_scheduler, is_scheduler_running
 
 # Page configuration
 st.set_page_config(
@@ -112,6 +120,32 @@ st.markdown("""
         margin: 0.5rem 0;
     }
     
+    /* Larger button for article summary - show full text */
+    div[data-testid="stButton"] > button[kind="secondary"] {
+        min-height: 80px;
+        height: auto;
+        white-space: normal;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        padding: 1rem 1.25rem;
+        text-align: left;
+        line-height: 1.6;
+        font-size: 0.95rem;
+        display: flex;
+        align-items: flex-start;
+        justify-content: flex-start;
+    }
+    
+    /* Specific styling for summary buttons */
+    button[key^="summary_"] {
+        min-height: 80px !important;
+        height: auto !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        overflow-wrap: break-word !important;
+        text-overflow: unset !important;
+    }
+    
     .categories-container {
         display: flex;
         flex-wrap: wrap;
@@ -165,6 +199,42 @@ st.markdown("""
         display: block;
     }
     
+    /* Responsive header image with abstract sunrise */
+    .header-image-container {
+        width: 100%;
+        height: 200px;
+        background: linear-gradient(135deg, #ff6b6b 0%, #ffa500 25%, #ffd700 50%, #ff8c00 75%, #ff6347 100%);
+        background-size: cover;
+        background-position: center;
+        margin: 0;
+        padding: 0;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .header-image-container::before {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 60%;
+        background: linear-gradient(to top, rgba(255, 140, 0, 0.8) 0%, rgba(255, 215, 0, 0.6) 30%, rgba(255, 165, 0, 0.4) 60%, transparent 100%);
+    }
+    
+    .header-image-container::after {
+        content: '';
+        position: absolute;
+        top: 20%;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 120px;
+        height: 120px;
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 200, 0.7) 40%, transparent 70%);
+        border-radius: 50%;
+        box-shadow: 0 0 60px rgba(255, 255, 200, 0.8);
+    }
+    
     @media (max-width: 768px) {
         .horizontal-menu {
             flex-direction: column;
@@ -172,6 +242,19 @@ st.markdown("""
         }
         .menu-item {
             text-align: center;
+        }
+        .header-image-container {
+            height: 150px;
+        }
+        .header-image-container::after {
+            width: 80px;
+            height: 80px;
+        }
+    }
+    
+    @media (min-width: 1200px) {
+        .header-image-container {
+            height: 250px;
         }
     }
     </style>
@@ -186,6 +269,10 @@ if 'preferences' not in st.session_state:
     st.session_state.preferences = None
 if 'current_page' not in st.session_state:
     st.session_state.current_page = 'Nieuws'
+if 'last_fetch_time' not in st.session_state:
+    st.session_state.last_fetch_time = None
+if 'is_fetching' not in st.session_state:
+    st.session_state.is_fetching = False
 
 
 def init_supabase():
@@ -208,13 +295,35 @@ def init_supabase():
         return None
 
 
+def get_user_attr(user, attr: str, default=None):
+    """Safely get user attribute from dict or Pydantic object."""
+    if user is None:
+        return default
+    
+    # If it's a dictionary
+    if isinstance(user, dict):
+        return user.get(attr, default)
+    
+    # If it's a Pydantic object or has attributes
+    if hasattr(user, attr):
+        return getattr(user, attr, default)
+    
+    # Try to access as dict if it has __getitem__
+    try:
+        return user[attr]
+    except (TypeError, KeyError):
+        pass
+    
+    return default
+
+
 def render_horizontal_menu():
     """Render horizontal navigation menu."""
     menu_html = """
     <div class="horizontal-menu">
         <a class="menu-item" href="?page=Nieuws" onclick="window.location.href='?page=Nieuws'; return false;" target="_self">Nieuws</a>
         <a class="menu-item" href="?page=Waarom" onclick="window.location.href='?page=Waarom'; return false;" target="_self">Waarom?</a>
-        <a class="menu-item" href="?page=Frustrate" onclick="window.location.href='?page=Frustrate'; return false;" target="_self">Frustrate yourself</a>
+        <a class="menu-item" href="?page=Frustrate" onclick="window.location.href='?page=Frustrate'; return false;" target="_self">Dit wil je niet</a>
         <a class="menu-item" href="?page=Gebruiker" onclick="window.location.href='?page=Gebruiker'; return false;" target="_self">Gebruiker</a>
     </div>
     """
@@ -282,36 +391,158 @@ def format_datetime(dt_str: Optional[str]) -> str:
         return dt_str
 
 
-def get_summary_sentences(text: str, num_sentences: int = 2) -> str:
-    """Extract first N sentences from text."""
+def get_summary_sentences(text: str, num_sentences: int = 3) -> str:
+    """Extract first N complete sentences from text."""
     if not text:
         return ""
     text = strip_html_tags(text)
-    sentences = re.split(r'[.!?]+\s+', text)
-    sentences = [s.strip() for s in sentences if s.strip()]
-    if len(sentences) >= num_sentences:
-        summary = '. '.join(sentences[:num_sentences])
+    
+    # Better sentence splitting - handle multiple sentence endings
+    # Split on sentence endings followed by space and capital letter or end of string
+    sentences = re.split(r'([.!?]+)\s+(?=[A-Z]|$)', text)
+    
+    # Reconstruct sentences with their punctuation
+    complete_sentences = []
+    i = 0
+    while i < len(sentences):
+        if i + 1 < len(sentences) and re.match(r'[.!?]+', sentences[i + 1]):
+            # This is a sentence with punctuation
+            sentence = (sentences[i] + sentences[i + 1]).strip()
+            if sentence:
+                complete_sentences.append(sentence)
+            i += 2
+        else:
+            # Last part or no punctuation found
+            if sentences[i].strip():
+                complete_sentences.append(sentences[i].strip())
+            i += 1
+    
+    # If regex splitting didn't work well, try simpler approach
+    if len(complete_sentences) < num_sentences:
+        # Fallback: split on sentence endings
+        sentences = re.split(r'([.!?]+)\s+', text)
+        complete_sentences = []
+        for i in range(0, len(sentences) - 1, 2):
+            if i + 1 < len(sentences):
+                sentence = (sentences[i] + sentences[i + 1]).strip()
+                if sentence:
+                    complete_sentences.append(sentence)
+        if len(sentences) % 2 == 1 and sentences[-1].strip():
+            complete_sentences.append(sentences[-1].strip())
+    
+    # Take first N sentences and join them
+    if len(complete_sentences) >= num_sentences:
+        summary = ' '.join(complete_sentences[:num_sentences])
+        # Ensure it ends with punctuation
         if summary and not summary[-1] in '.!?':
             summary += '.'
         return summary
-    return text[:200] + "..." if len(text) > 200 else text
+    elif complete_sentences:
+        # Return all available sentences
+        summary = ' '.join(complete_sentences)
+        if summary and not summary[-1] in '.!?':
+            summary += '.'
+        return summary
+    else:
+        # Fallback: return first part of text (up to reasonable length)
+        text_clean = text.strip()
+        if len(text_clean) > 300:
+            # Try to find a sentence ending within first 300 chars
+            match = re.search(r'[.!?]+\s+', text_clean[:300])
+            if match:
+                return text_clean[:match.end()].strip()
+            return text_clean[:300].strip() + '...'
+        return text_clean
 
 
-def ensure_eli5_summary(article: Dict[str, Any], supabase) -> Dict[str, Any]:
-    """Ensure article has ELI5 summary, generate if missing."""
+def article_matches_category_filter(article: Dict[str, Any], selected_categories: List[str]) -> bool:
+    """
+    Check if article matches category filter.
+    
+    Logic: Article is INCLUDED ONLY if ALL its categories are in selected_categories.
+    If article has ANY category NOT in selected_categories, it is FILTERED OUT.
+    
+    Special case: If no categories are selected, show all articles (no filter).
+    
+    Args:
+        article: Article dictionary
+        selected_categories: List of selected category names
+    
+    Returns:
+        True if article should be INCLUDED (all categories are selected), False if FILTERED OUT
+    """
+    if not selected_categories or len(selected_categories) == 0:
+        # No categories selected = show all articles (no filter)
+        return True
+    
+    # Collect all categories from the article
+    # Only use valid categories from the CATEGORIES list
+    from categorization_engine import CATEGORIES
+    valid_categories = [cat.lower().strip() for cat in CATEGORIES]
+    
+    article_categories = []
+    
+    # Add single category field if present AND it's a valid category
+    article_category = article.get('category', '')
+    if article_category and article_category.lower().strip() in valid_categories:
+        article_categories.append(article_category)
+    
+    # Add categories from array if present (only valid ones)
+    article_categories_array = article.get('categories', []) or []
+    if article_categories_array:
+        for cat in article_categories_array:
+            if cat and cat.lower().strip() in valid_categories:
+                article_categories.append(cat)
+    
+    # Remove duplicates and empty values
+    article_categories = [cat for cat in article_categories if cat]
+    article_categories = list(set(article_categories))  # Remove duplicates
+    
+    # If article has no categories, include it (no filter applies)
+    if not article_categories:
+        return True
+    
+    # Check if ALL article categories are in selected_categories
+    # If ANY category is NOT in selected_categories, filter it out
+    # Case-insensitive comparison to handle variations
+    selected_lower = [cat.lower().strip() for cat in selected_categories if cat]
+    for cat in article_categories:
+        if cat and cat.lower().strip() not in selected_lower:
+            return False  # This category is not selected, so filter out
+    
+    # All categories are in selected_categories
+    return True
+
+
+def ensure_eli5_summary(article: Dict[str, Any], supabase, generate_if_missing: bool = False) -> Dict[str, Any]:
+    """
+    Ensure article has ELI5 summary.
+    
+    Args:
+        article: Article dict
+        supabase: Supabase client
+        generate_if_missing: If True, generate summary synchronously (can freeze page). 
+                            If False, only return existing summary (default).
+    """
     if not article.get('eli5_summary_nl'):
-        # Generate ELI5 summary
-        text = f"{article.get('title', '')} {article.get('description', '')}"
-        if article.get('full_content'):
-            text += f" {article.get('full_content', '')[:1000]}"
-        
-        result = generate_eli5_summary_nl_with_llm(text, article.get('title', ''))
-        if result and result.get('summary'):
-            article['eli5_summary_nl'] = result['summary']
-            article['eli5_llm'] = result.get('llm', 'Onbekend')
-            # Save to database
-            supabase.update_article_eli5(article['id'], result['summary'], result.get('llm'))
+        if generate_if_missing:
+            # Generate ELI5 summary (can take 30+ seconds - use with caution)
+            with st.spinner("Eenvoudige uitleg genereren..."):
+                text = f"{article.get('title', '')} {article.get('description', '')}"
+                if article.get('full_content'):
+                    text += f" {article.get('full_content', '')[:1000]}"
+                
+                result = generate_eli5_summary_nl_with_llm(text, article.get('title', ''))
+                if result and result.get('summary'):
+                    article['eli5_summary_nl'] = result['summary']
+                    article['eli5_llm'] = result.get('llm', 'Onbekend')
+                    # Save to database
+                    supabase.update_article_eli5(article['id'], result['summary'], result.get('llm'))
+                else:
+                    article['eli5_summary_nl'] = None
+                    article['eli5_llm'] = None
         else:
+            # Don't generate, just return existing or None
             article['eli5_summary_nl'] = None
             article['eli5_llm'] = None
     else:
@@ -325,39 +556,33 @@ def render_article_card(article: Dict[str, Any], supabase):
     """Render a single article card (overview - only image and summary)."""
     article_id = article['id']
     
-    # Image (clickable) - stays in same window
-    if article.get('image_url'):
-        try:
-            # Use HTML with onclick that updates query params (stays in same window)
-            # window.location.search stays in the same window
-            image_html = f"""
-            <div class="clickable-image-container" 
-                 onclick="window.location.search = '?article={article_id}'; return false;" 
-                 style="cursor: pointer; margin-bottom: 0.5rem;">
-                <img src="{article['image_url']}" 
-                     style="width: 100%; height: auto; border-radius: 4px; display: block;" 
-                     alt="Click to view article" />
-            </div>
-            """
-            st.markdown(image_html, unsafe_allow_html=True)
-        except:
-            # Fallback: just show image
+    # Create a container for the clickable card
+    with st.container():
+        # Image
+        if article.get('image_url'):
             try:
                 st.image(article['image_url'], use_container_width=True)
             except:
                 pass
-    
-    # Title (clickable)
-    title = article.get('title', 'Geen titel')
-    if st.button(title[:70] + "..." if len(title) > 70 else title, key=f"article_{article_id}", use_container_width=True):
-        st.query_params["article"] = article_id
-        st.rerun()
-    
-    # Summary (2 sentences) - only this on overview
-    description = article.get('description', '')
-    if description:
-        summary = get_summary_sentences(description, num_sentences=2)
-        st.markdown(f'<div class="article-summary">{summary}</div>', unsafe_allow_html=True)
+        
+        # Title (clickable - this is the main way to open article)
+        title = article.get('title', 'Geen titel')
+        title_display = title[:70] + "..." if len(title) > 70 else title
+        if st.button(title_display, key=f"article_{article_id}", use_container_width=True):
+            st.query_params["article"] = article_id
+            st.rerun()
+        
+        # Summary from article content (first sentences) - clickable
+        full_content = article.get('full_content', '')
+        if full_content:
+            # Get first 3-4 complete sentences from the article content
+            summary = get_summary_sentences(full_content, num_sentences=3)
+            if summary:
+                # Make the summary clickable - show full text without truncation
+                # Use a button with proper styling to show complete sentences
+                if st.button(summary, key=f"summary_{article_id}", use_container_width=True):
+                    st.query_params["article"] = article_id
+                    st.rerun()
 
 
 def render_article_detail(article_id: str):
@@ -372,8 +597,9 @@ def render_article_detail(article_id: str):
             st.rerun()
         return
     
-    # Ensure ELI5 summary
-    article = ensure_eli5_summary(article, supabase)
+    # Don't generate ELI5 automatically (prevents freezing)
+    # Only use existing summary if available
+    article = ensure_eli5_summary(article, supabase, generate_if_missing=False)
     
     st.markdown('<div class="article-detail-container">', unsafe_allow_html=True)
     
@@ -386,77 +612,73 @@ def render_article_detail(article_id: str):
     meta = []
     if article.get('published_at'):
         meta.append(format_datetime(article['published_at']))
-    if article.get('categories'):
-        meta.append(f"**{', '.join(article['categories'][:3])}**")
     if meta:
         st.caption(" | ".join(meta))
     
     st.markdown("---")
     
-    # Image (clickable - redirects to article)
-    if article.get('image_url'):
-        col_left, col_img, col_right = st.columns([1, 2, 1])
-        with col_img:
-            # Make image clickable
-            article_id = article['id']
-            image_html = f"""
-            <div class="clickable-image-container" 
-                 onclick="window.location.search = '?article={article_id}'; return false;" 
-                 style="cursor: pointer;">
-                <img src="{article['image_url']}" 
-                     style="width: 100%; height: auto; border-radius: 4px; display: block; max-width: 50%;" 
-                     alt="Click to view article" />
-            </div>
-            """
-            st.markdown(image_html, unsafe_allow_html=True)
+    # Layout: Image on left, Categorization info on right
+    col_img, col_cat = st.columns([1, 1])
     
-    # Categories (on detail page)
-    categories = article.get('categories', [])
+    with col_img:
+        # Image on the left
+        if article.get('image_url'):
+            try:
+                st.image(article['image_url'], use_container_width=True)
+            except:
+                pass
     
-    # Handle categories if they're stored as a string (JSON) or list
-    if isinstance(categories, str):
-        try:
-            import json
-            categories = json.loads(categories)
-        except:
-            # If it's a string but not JSON, try to parse it manually
-            if categories.strip().startswith('['):
-                # Remove brackets and split by comma
-                categories = [c.strip().strip('"\'') for c in categories.strip('[]').split(',') if c.strip()]
+    with col_cat:
+        # Categorization information on the right
+        categories = article.get('categories', [])
+        
+        # Handle categories if they're stored as a string (JSON) or list
+        if isinstance(categories, str):
+            try:
+                import json
+                categories = json.loads(categories)
+            except:
+                # If it's a string but not JSON, try to parse it manually
+                if categories.strip().startswith('['):
+                    # Remove brackets and split by comma
+                    categories = [c.strip().strip('"\'') for c in categories.strip('[]').split(',') if c.strip()]
+                else:
+                    categories = []
+        
+        # Ensure categories is a list
+        if not isinstance(categories, list):
+            categories = []
+        
+        if categories and len(categories) > 0:
+            st.subheader("Categorieën")
+            # Display categories in a horizontal flex container
+            # Use proper HTML escaping for category names
+            from html import escape
+            categories_html = '<div class="categories-container">'
+            for cat in categories:
+                if cat:  # Only add non-empty categories
+                    escaped_cat = escape(str(cat))
+                    categories_html += f'<span class="article-category">{escaped_cat}</span>'
+            categories_html += '</div>'
+            st.markdown(categories_html, unsafe_allow_html=True)
+            
+            # Show which LLM was used for categorization
+            categorization_llm = article.get('categorization_llm', 'Keywords')
+            if categorization_llm and categorization_llm != 'Keywords':
+                llm_display = {
+                    'Hugging Face': 'Hugging Face',
+                    'Groq': 'Groq',
+                    'OpenAI': 'OpenAI',
+                    'ChatLLM': 'ChatLLM (Aitomatic)'
+                }.get(categorization_llm, categorization_llm)
+                st.caption(f"📊 Categorisatie door: {llm_display}")
             else:
-                categories = []
-    
-    # Ensure categories is a list
-    if not isinstance(categories, list):
-        categories = []
-    
-    if categories and len(categories) > 0:
-        st.subheader("Categorieën")
-        # Display categories in a horizontal flex container
-        # Use proper HTML escaping for category names
-        from html import escape
-        categories_html = '<div class="categories-container">'
-        for cat in categories:
-            if cat:  # Only add non-empty categories
-                escaped_cat = escape(str(cat))
-                categories_html += f'<span class="article-category">{escaped_cat}</span>'
-        categories_html += '</div>'
-        st.markdown(categories_html, unsafe_allow_html=True)
-        
-        # Show which LLM was used for categorization
-        categorization_llm = article.get('categorization_llm', 'Keywords')
-        if categorization_llm and categorization_llm != 'Keywords':
-            llm_display = {
-                'Hugging Face': 'Hugging Face',
-                'Groq': 'Groq',
-                'OpenAI': 'OpenAI',
-                'ChatLLM': 'ChatLLM (Aitomatic)'
-            }.get(categorization_llm, categorization_llm)
-            st.caption(f"📊 Categorisatie door: {llm_display}")
+                st.caption("📊 Categorisatie door: Keywords (geen LLM)")
         else:
-            st.caption("📊 Categorisatie door: Keywords (geen LLM)")
-        
-        st.markdown("---")
+            st.subheader("Categorieën")
+            st.info("Geen categorieën beschikbaar")
+    
+    st.markdown("---")
     
     # Description
     if article.get('description'):
@@ -465,9 +687,13 @@ def render_article_detail(article_id: str):
         st.markdown(clean_description, unsafe_allow_html=True)
         st.markdown("---")
     
-    # ELI5 Summary (automatically shown on detail page)
-    # Ensure ELI5 exists
-    article = ensure_eli5_summary(article, supabase)
+    # ELI5 Summary (show existing or allow generation on demand)
+    # Check if we need to generate
+    if not article.get('eli5_summary_nl'):
+        # Show button to generate ELI5 summary (prevents freezing)
+        if st.button("✨ Genereer eenvoudige uitleg (ELI5)", key=f"generate_eli5_{article.get('id', article_id)}"):
+            article = ensure_eli5_summary(article, supabase, generate_if_missing=True)
+            st.rerun()
     
     if article.get('eli5_summary_nl'):
         llm_name = article.get('eli5_llm', 'Onbekend')
@@ -506,42 +732,30 @@ def render_article_detail(article_id: str):
     st.markdown('</div>', unsafe_allow_html=True)
 
 
-def render_nieuws_page():
-    """Render main news overview page."""
-    supabase = st.session_state.supabase
+def check_and_fetch_new_articles():
+    """Check if 15 minutes have passed since last fetch and fetch new articles if needed."""
+    import time
+    from datetime import datetime, timedelta
     
-    st.title("📰 Nieuws")
-    
-    # Check if viewing article detail
-    if "article" in st.query_params:
-        render_article_detail(st.query_params["article"])
+    # Check if we're already fetching to avoid duplicate fetches
+    if st.session_state.is_fetching:
         return
     
-    # Filters
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        search_query = st.text_input("🔍 Zoeken", placeholder="Zoek in artikelen...", key="search")
-    with col2:
-        category_filter = st.selectbox(
-            "Categorie",
-            ["Alle", "Politiek", "Nationaal", "Internationaal", "Sport", "Trump", "Rusland", "Overig"],
-            key="category_filter"
-        )
+    # Check if 15 minutes have passed since last fetch
+    should_fetch = False
+    if st.session_state.last_fetch_time is None:
+        # First time, fetch immediately
+        should_fetch = True
+    else:
+        # Check if 15 minutes (900 seconds) have passed
+        time_since_last_fetch = time.time() - st.session_state.last_fetch_time
+        if time_since_last_fetch >= 900:  # 15 minutes
+            should_fetch = True
     
-    st.markdown("---")
-    
-    # Action buttons
-    col1, col2 = st.columns(2)
-    with col1:
-        refresh_clicked = st.button("🔄 Artikelen Vernieuwen", use_container_width=True)
-    with col2:
-        recategorize_clicked = st.button("🏷️ Alle Artikelen Her-categoriseren", use_container_width=True)
-    
-    # Handle refresh button
-    if refresh_clicked:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+    if should_fetch:
+        st.session_state.is_fetching = True
         
+        # Fetch articles in background (non-blocking)
         feed_urls = [
             'https://feeds.nos.nl/nosnieuwsalgemeen',
             'https://feeds.nos.nl/nosnieuwsbinnenland',
@@ -550,77 +764,61 @@ def render_nieuws_page():
         
         total_inserted = 0
         total_updated = 0
-        total_skipped = 0
         
-        for idx, feed_url in enumerate(feed_urls):
-            status_text.text(f"Feed {idx + 1}/{len(feed_urls)} ophalen...")
-            progress_bar.progress((idx) / len(feed_urls))
+        # Use a placeholder to show status
+        status_placeholder = st.empty()
+        status_placeholder.info("🔄 Controleren op nieuwe artikelen...")
+        
+        try:
+            for feed_url in feed_urls:
+                try:
+                    # Use LLM categorization for better accuracy
+                    result = fetch_and_upsert_articles(feed_url, max_items=30, use_llm_categorization=True)
+                    if result.get('success'):
+                        total_inserted += result.get('inserted', 0)
+                        total_updated += result.get('updated', 0)
+                except Exception as e:
+                    # Silently log errors but continue
+                    pass
             
-            try:
-                # Use LLM categorization for better accuracy
-                result = fetch_and_upsert_articles(feed_url, max_items=30, use_llm_categorization=True)
-                if result.get('success'):
-                    total_inserted += result.get('inserted', 0)
-                    total_updated += result.get('updated', 0)
-                    total_skipped += result.get('skipped', 0)
-                else:
-                    st.warning(f"Fout bij feed {feed_url}: {result.get('error', 'Onbekende fout')}")
-            except Exception as e:
-                st.error(f"Fout bij verwerken van feed: {str(e)[:200]}")
-                total_skipped += 1
-        
-        progress_bar.progress(1.0)
-        status_text.text("Klaar!")
-        
-        if total_inserted > 0 or total_updated > 0:
-            st.success(f"✅ {total_inserted} nieuwe artikelen, {total_updated} bijgewerkt")
-            if total_skipped > 0:
-                st.info(f"ℹ️ {total_skipped} artikelen overgeslagen")
-        else:
-            st.info("Geen nieuwe artikelen gevonden")
-        
-        # Small delay to show progress
-        import time
-        time.sleep(0.5)
-        st.rerun()
-    
-    # Handle recategorize button
-    if recategorize_clicked:
-        from articles_repository import recategorize_all_articles
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        status_text.text("Artikelen ophalen...")
-        progress_bar.progress(0.1)
-        
-        # Recategorize using LLM
-        status_text.text("Artikelen her-categoriseren met LLM...")
-        progress_bar.progress(0.3)
-        
-        result = recategorize_all_articles(limit=None, use_llm=True)
-        
-        progress_bar.progress(1.0)
-        
-        if result.get('success'):
-            processed = result.get('processed', 0)
-            updated = result.get('updated', 0)
-            errors = result.get('errors', 0)
+            # Update last fetch time
+            st.session_state.last_fetch_time = time.time()
             
-            status_text.text("Klaar!")
-            
-            if updated > 0:
-                st.success(f"✅ {updated} artikelen her-categoriseerd!")
-                if errors > 0:
-                    st.warning(f"⚠️ {errors} fouten opgetreden")
+            # Show brief status message
+            if total_inserted > 0 or total_updated > 0:
+                status_placeholder.success(f"✅ {total_inserted} nieuwe artikelen gevonden")
+                time.sleep(2)  # Show message briefly
+                status_placeholder.empty()
             else:
-                st.info("Geen artikelen gevonden om te her-categoriseren")
-        else:
-            st.error(f"Fout: {result.get('error', 'Onbekende fout')}")
-        
-        import time
-        time.sleep(2)
-        st.rerun()
+                status_placeholder.empty()
+                
+        except Exception as e:
+            status_placeholder.empty()
+        finally:
+            st.session_state.is_fetching = False
+
+
+def render_nieuws_page():
+    """Render main news overview page."""
+    # Ensure supabase is initialized
+    if st.session_state.supabase is None:
+        st.session_state.supabase = init_supabase()
+    
+    supabase = st.session_state.supabase
+    
+    if not supabase:
+        st.error("❌ Opslag niet geïnitialiseerd. Herlaad de pagina.")
+        return
+    
+    st.title("📰 Nieuws")
+    
+    # Check if viewing article detail
+    if "article" in st.query_params:
+        render_article_detail(st.query_params["article"])
+        return
+    
+    # Automatic article fetching disabled - articles are managed externally
+    # check_and_fetch_new_articles()  # Disabled: articles stored in Supabase, no local fetching needed
     
     # Get user preferences
     blacklist = []
@@ -628,11 +826,17 @@ def render_nieuws_page():
     if st.session_state.user:
         # Load preferences if not already loaded
         if st.session_state.preferences is None:
-            st.session_state.preferences = supabase.get_user_preferences(st.session_state.user['id'])
+            user_id = get_user_attr(st.session_state.user, 'id')
+            if user_id:
+                st.session_state.preferences = supabase.get_user_preferences(user_id)
         
         if st.session_state.preferences:
             blacklist = st.session_state.preferences.get('blacklist_keywords', [])
-            selected_categories = st.session_state.preferences.get('selected_categories')
+            selected_categories = st.session_state.preferences.get('selected_categories', [])
+        
+        # Ensure selected_categories is always a list, not None
+        if selected_categories is None:
+            selected_categories = []
     
     # Debug: Show blacklist if in debug mode
     if st.session_state.get('debug_mode', False):
@@ -642,27 +846,49 @@ def render_nieuws_page():
             st.info("🔍 Debug: Geen blacklist actief")
     
     # Get articles
-    category = None if category_filter == "Alle" else category_filter
     try:
-        categories_filter = selected_categories if (st.session_state.user and selected_categories) else None
-        
-        # Ensure blacklist is properly formatted
-        blacklist_to_use = None
-        if blacklist and isinstance(blacklist, list) and len(blacklist) > 0:
-            # Filter out empty strings and normalize
-            blacklist_to_use = [kw.strip() for kw in blacklist if kw and kw.strip()]
-            if len(blacklist_to_use) == 0:
-                blacklist_to_use = None
-        
-        articles = supabase.get_articles(
-            limit=50,
-            category=category,
-            categories=categories_filter,
-            search_query=search_query if search_query else None,
-            blacklist_keywords=blacklist_to_use
-        )
+        if not supabase:
+            st.error("❌ Opslag niet geïnitialiseerd. Herlaad de pagina.")
+            articles = []
+        else:
+            categories_filter = selected_categories if (st.session_state.user and selected_categories) else None
+            
+            # Ensure blacklist is properly formatted
+            blacklist_to_use = None
+            if blacklist and isinstance(blacklist, list) and len(blacklist) > 0:
+                # Filter out empty strings and normalize
+                blacklist_to_use = [kw.strip() for kw in blacklist if kw and kw.strip()]
+                if len(blacklist_to_use) == 0:
+                    blacklist_to_use = None
+            
+            articles = supabase.get_articles(
+                limit=50,
+                category=None,
+                categories=categories_filter,
+                search_query=None,
+                blacklist_keywords=blacklist_to_use
+            )
+            
+            # Debug output if no articles found
+            if len(articles) == 0:
+                # Try fetching without category filters to see if that works
+                test_articles = supabase.get_articles(limit=5, category=None, categories=None, search_query=None, blacklist_keywords=blacklist_to_use)
+                if len(test_articles) > 0:
+                    if selected_categories and len(selected_categories) > 0:
+                        st.warning(f"⚠️ Geen artikelen gevonden met de geselecteerde categorieën. Zonder categorie filter: {len(test_articles)} artikelen beschikbaar.")
+                        st.info("💡 Tip: Selecteer meer categorieën op de 'Gebruiker' pagina, of controleer of artikelen de juiste categorieën hebben.")
+                    else:
+                        st.info("ℹ️ Geen artikelen gevonden. Controleer of er artikelen in de database staan.")
+                else:
+                    st.warning("⚠️ Geen artikelen in database. Wacht even tot artikelen worden opgehaald...")
+            
+            # Debug: Show article count if in debug mode
+            if st.session_state.get('debug_mode', False):
+                st.info(f"🔍 Debug: {len(articles)} artikelen opgehaald")
     except Exception as e:
         st.error(f"Fout bij ophalen artikelen: {str(e)}")
+        import traceback
+        st.exception(e)
         articles = []
     
     # Display articles
@@ -708,12 +934,17 @@ def render_waarom_page():
 
 
 def render_frustrate_page():
-    """Render 'Frustrate yourself' page showing filtered articles."""
+    """Render 'Dit wil je niet' page showing filtered articles."""
     supabase = st.session_state.supabase
     
-    st.title("😤 Frustrate yourself")
+    # Check if viewing article detail
+    if "article" in st.query_params:
+        render_article_detail(st.query_params["article"])
+        return
+    
+    st.title("Dit wil je niet")
     st.markdown("---")
-    st.markdown("**Deze pagina toont alle artikelen die door de blacklist filter zijn uitgefilterd.**")
+    st.markdown("**Deze pagina toont alle artikelen die door de blacklist filter EN categorie filter zijn uitgefilterd.**")
     st.markdown("Gebruik dit om te testen of de categorisatie en keyword filters correct werken.")
     st.markdown("---")
     
@@ -725,41 +956,74 @@ def render_frustrate_page():
     
     # Load preferences if not already loaded
     if st.session_state.preferences is None:
-        st.session_state.preferences = supabase.get_user_preferences(st.session_state.user['id'])
+        user_id = get_user_attr(st.session_state.user, 'id')
+        if user_id:
+            st.session_state.preferences = supabase.get_user_preferences(user_id)
     
     # Get user preferences to know what was filtered
     blacklist = []
+    selected_categories = []
     if st.session_state.preferences:
         blacklist = st.session_state.preferences.get('blacklist_keywords', [])
+        selected_categories = st.session_state.preferences.get('selected_categories', [])
+    
+    # Ensure selected_categories is a list
+    if selected_categories is None or not isinstance(selected_categories, list):
+        selected_categories = []
     
     # Debug info
     if st.session_state.get('debug_mode', False):
-        st.write(f"Debug - User ID: {st.session_state.user.get('id', 'N/A')}")
+        user_id = get_user_attr(st.session_state.user, 'id', 'N/A')
+        st.write(f"Debug - User ID: {user_id}")
         st.write(f"Debug - Preferences loaded: {st.session_state.preferences is not None}")
         if st.session_state.preferences:
             st.write(f"Debug - Preferences keys: {list(st.session_state.preferences.keys())}")
             st.write(f"Debug - Blacklist from prefs: {st.session_state.preferences.get('blacklist_keywords', 'NOT FOUND')}")
+            st.write(f"Debug - Selected categories: {selected_categories}")
     
+    # Show active filters
+    has_filters = False
     if blacklist and len(blacklist) > 0:
         st.info(f"**Actieve blacklist ({len(blacklist)} trefwoorden):** {', '.join(blacklist)}")
-    else:
-        st.warning("⚠️ Geen blacklist ingesteld. Ga naar de 'Gebruiker' pagina en voeg trefwoorden toe aan je blacklist om uitgefilterde artikelen te zien.")
+        has_filters = True
+    
+    if selected_categories and len(selected_categories) > 0:
+        st.info(f"**Geselecteerde categorieën ({len(selected_categories)}):** {', '.join(selected_categories)}")
+        has_filters = True
+    elif not selected_categories or len(selected_categories) == 0:
+        st.warning("⚠️ Geen categorieën geselecteerd. Alle artikelen worden uitgefilterd.")
+        has_filters = True
+    
+    if not has_filters:
+        st.warning("⚠️ Geen filters ingesteld. Ga naar de 'Gebruiker' pagina om filters in te stellen.")
         st.markdown("---")
         return
     
     st.markdown("---")
     
-    # Get ALL articles without blacklist filter
+    # Get ALL articles without any filters
     try:
         all_articles = supabase.get_articles(
             limit=200,  # Get more articles
-            blacklist_keywords=None  # No blacklist filter - get everything
+            blacklist_keywords=None,  # No blacklist filter - get everything
+            categories=None  # No category filter - get everything
         )
         
         # Now manually filter to find articles that WOULD be filtered
         filtered_articles = []
-        if blacklist:
-            for article in all_articles:
+        for article in all_articles:
+            is_filtered = False
+            filter_reason = []
+            
+            # Check category filter
+            # New logic: Article is filtered out if ANY category is NOT in selected_categories
+            if selected_categories and len(selected_categories) > 0:
+                if not article_matches_category_filter(article, selected_categories):
+                    is_filtered = True
+                    filter_reason.append("Categorie filter")
+            
+            # Check blacklist filter
+            if blacklist:
                 title = (article.get('title') or '').lower()
                 description = (article.get('description') or '').lower()
                 full_content = (article.get('full_content') or '').lower()
@@ -770,12 +1034,17 @@ def render_frustrate_page():
                 for keyword in blacklist:
                     keyword_lower = keyword.lower().strip()
                     if keyword_lower and keyword_lower in all_text:
-                        filtered_articles.append(article)
-                        break  # Only add once even if multiple keywords match
+                        is_filtered = True
+                        filter_reason.append(f"Blacklist: {keyword}")
+                        break  # Only add reason once per article
+            
+            if is_filtered:
+                article['_filter_reason'] = ', '.join(filter_reason)
+                filtered_articles.append(article)
         
         if filtered_articles:
             st.subheader(f"📋 {len(filtered_articles)} uitgefilterde artikelen")
-            st.caption("Deze artikelen worden normaal gesproken verborgen door je blacklist.")
+            st.caption("Deze artikelen worden normaal gesproken verborgen door je blacklist en/of categorie filters.")
             st.markdown("---")
             
             # Display filtered articles
@@ -819,7 +1088,16 @@ def render_gebruiker_page():
             if st.button("Inloggen", use_container_width=True):
                 result = supabase.sign_in(email, password)
                 if result.get('success'):
-                    st.session_state.user = result.get('user')
+                    user = result.get('user')
+                    # Convert user to dict if it's a Pydantic object
+                    if user and not isinstance(user, dict):
+                        st.session_state.user = {
+                            'id': get_user_attr(user, 'id'),
+                            'email': get_user_attr(user, 'email'),
+                            'created_at': get_user_attr(user, 'created_at')
+                        }
+                    else:
+                        st.session_state.user = user
                     st.session_state.preferences = None
                     st.success("Ingelogd!")
                     st.rerun()
@@ -844,7 +1122,8 @@ def render_gebruiker_page():
                         st.error(f"Registratie mislukt: {result.get('error', 'Onbekende fout')}")
     else:
         # User is logged in
-        st.success(f"👤 Ingelogd als: {st.session_state.user.get('email', 'Gebruiker')}")
+        user_email = get_user_attr(st.session_state.user, 'email', 'Gebruiker')
+        st.success(f"👤 Ingelogd als: {user_email}")
         
         if st.button("🚪 Uitloggen", use_container_width=True):
             supabase.sign_out()
@@ -856,11 +1135,17 @@ def render_gebruiker_page():
         
         # Get preferences
         if st.session_state.preferences is None:
-            st.session_state.preferences = supabase.get_user_preferences(st.session_state.user['id'])
+            user_id = get_user_attr(st.session_state.user, 'id')
+            if user_id:
+                st.session_state.preferences = supabase.get_user_preferences(user_id)
         
         prefs = st.session_state.preferences
-        blacklist = prefs.get('blacklist_keywords', [])
-        selected_categories = prefs.get('selected_categories', [])
+        blacklist = prefs.get('blacklist_keywords', []) if prefs else []
+        selected_categories = prefs.get('selected_categories', []) if prefs else []
+        
+        # Ensure selected_categories is always a list, not None
+        if selected_categories is None or not isinstance(selected_categories, list):
+            selected_categories = []
         
         # Category selection
         st.subheader("📂 Categorieën")
@@ -870,6 +1155,10 @@ def render_gebruiker_page():
         all_categories = get_all_categories()
         category_selections = {}
         
+        # Ensure selected_categories is a list before using 'in' operator
+        if not isinstance(selected_categories, list):
+            selected_categories = []
+        
         for category in all_categories:
             category_selections[category] = st.checkbox(
                 category,
@@ -878,10 +1167,16 @@ def render_gebruiker_page():
             )
         
         new_selected = [cat for cat, selected in category_selections.items() if selected]
-        if new_selected != selected_categories:
-            if supabase.update_user_preferences(st.session_state.user['id'], selected_categories=new_selected):
+        
+        # Save button for categories
+        if st.button("💾 Opslaan", key="save_categories", use_container_width=True):
+            user_id = get_user_attr(st.session_state.user, 'id')
+            if user_id and supabase.update_user_preferences(user_id, selected_categories=new_selected):
                 st.session_state.preferences = None
+                st.success("✅ Categorieën opgeslagen! Statistieken worden bijgewerkt...")
                 st.rerun()
+            else:
+                st.error("❌ Fout bij opslaan van categorieën")
         
         st.markdown("---")
         
@@ -897,7 +1192,9 @@ def render_gebruiker_page():
                 with col2:
                     if st.button("❌", key=f"remove_{keyword}", use_container_width=True):
                         blacklist.remove(keyword)
-                        supabase.update_user_preferences(st.session_state.user['id'], blacklist_keywords=blacklist)
+                        user_id = get_user_attr(st.session_state.user, 'id')
+                        if user_id:
+                            supabase.update_user_preferences(user_id, blacklist_keywords=blacklist)
                         st.session_state.preferences = None
                         st.rerun()
         else:
@@ -910,16 +1207,229 @@ def render_gebruiker_page():
                 keyword = new_keyword.strip()
                 if keyword not in blacklist:
                     blacklist.append(keyword)
-                    if supabase.update_user_preferences(st.session_state.user['id'], blacklist_keywords=blacklist):
+                    user_id = get_user_attr(st.session_state.user, 'id')
+                    if user_id and supabase.update_user_preferences(user_id, blacklist_keywords=blacklist):
                         st.session_state.preferences = None
                         st.success(f"'{keyword}' toegevoegd")
                         st.rerun()
                 else:
                     st.warning("Dit trefwoord staat al in de blacklist")
+        
+        st.markdown("---")
+        
+        # Recategorize articles without LLM categorization
+        st.subheader("🔄 Her-categoriseren met LLM")
+        st.caption("Her-categoriseer artikelen die nog geen LLM-categorisatie hebben")
+        
+        from categorization_engine import is_llm_available
+        
+        if is_llm_available():
+            if st.button("🔄 Her-categoriseer artikelen zonder LLM", use_container_width=True, key="recategorize_without_llm"):
+                from articles_repository import recategorize_articles_without_llm
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                article_text = st.empty()
+                
+                # Progress callback function
+                def update_progress(processed, total, current_title):
+                    if total > 0:
+                        progress = (processed / total) * 0.9  # 0% to 90%
+                        progress_bar.progress(progress)
+                        status_text.text(f"Her-categoriseren: {processed}/{total} artikelen...")
+                        article_text.text(f"Huidige artikel: {current_title}...")
+                
+                status_text.text("Artikelen ophalen...")
+                progress_bar.progress(0.05)
+                
+                try:
+                    result = recategorize_articles_without_llm(limit=50, progress_callback=update_progress)
+                except Exception as e:
+                    st.error(f"Fout tijdens her-categoriseren: {str(e)}")
+                    result = {'success': False, 'error': str(e)}
+                
+                progress_bar.progress(1.0)
+                article_text.empty()
+                
+                if result.get('success'):
+                    processed = result.get('processed', 0)
+                    updated = result.get('updated', 0)
+                    errors = result.get('errors', 0)
+                    skipped = result.get('skipped', 0)
+                    total = result.get('total', 0)
+                    
+                    status_text.text("Klaar!")
+                    
+                    if updated > 0:
+                        st.success(f"✅ {updated} artikelen her-categoriseerd met LLM!")
+                        if errors > 0:
+                            st.warning(f"⚠️ {errors} artikelen konden niet worden her-categoriseerd")
+                        if skipped > 0:
+                            st.info(f"ℹ️ {skipped} artikelen hadden al LLM-categorisatie en zijn overgeslagen")
+                    elif result.get('message'):
+                        st.info(f"ℹ️ {result.get('message')}")
+                    else:
+                        st.info("Geen artikelen gevonden om te her-categoriseren")
+                else:
+                    st.error(f"Fout: {result.get('error', 'Onbekende fout')}")
+                
+                import time
+                time.sleep(2)
+                st.rerun()
+        else:
+            st.warning("⚠️ Geen LLM beschikbaar. Configureer een LLM API key (Groq, Hugging Face, OpenAI, of ChatLLM) om artikelen te her-categoriseren.")
+            st.info("💡 Tip: Groq API is gratis en snel. Voeg GROQ_API_KEY toe aan je .env bestand.")
+        
+        st.markdown("---")
+        
+        # Statistics: Articles included/excluded per day
+        st.subheader("📊 Statistieken")
+        st.caption("Aantal artikelen per dag op basis van je voorkeuren")
+        
+        try:
+            # Get all articles from the last 7 days
+            from datetime import datetime, timedelta
+            import pytz
+            
+            amsterdam_tz = pytz.timezone('Europe/Amsterdam')
+            now = datetime.now(amsterdam_tz)
+            seven_days_ago = now - timedelta(days=7)
+            
+            # Get all articles (we'll filter in Python to calculate stats)
+            all_articles = supabase.get_articles(limit=500, category=None, categories=None, search_query=None, blacklist_keywords=None)
+            
+            # Filter articles by date (last 7 days)
+            recent_articles = []
+            for article in all_articles:
+                if article.get('published_at'):
+                    try:
+                        from dateutil import parser
+                        pub_date = parser.parse(article['published_at'])
+                        if pub_date.tzinfo is None:
+                            pub_date = pytz.utc.localize(pub_date)
+                        pub_date = pub_date.astimezone(amsterdam_tz)
+                        
+                        if pub_date >= seven_days_ago:
+                            recent_articles.append(article)
+                    except:
+                        pass
+            
+            # Group articles by date
+            articles_by_date = {}
+            for article in recent_articles:
+                try:
+                    from dateutil import parser
+                    pub_date = parser.parse(article['published_at'])
+                    if pub_date.tzinfo is None:
+                        pub_date = pytz.utc.localize(pub_date)
+                    pub_date = pub_date.astimezone(amsterdam_tz)
+                    date_key = pub_date.strftime('%Y-%m-%d')
+                    
+                    if date_key not in articles_by_date:
+                        articles_by_date[date_key] = []
+                    articles_by_date[date_key].append(article)
+                except:
+                    pass
+            
+            # Calculate included/excluded for each day
+            stats_data = []
+            for date_key in sorted(articles_by_date.keys(), reverse=True):
+                day_articles = articles_by_date[date_key]
+                
+                included = 0
+                excluded = 0
+                
+                for article in day_articles:
+                    # Check if article matches user preferences
+                    is_included = True
+                    
+                    # Check category filter
+                    # New logic: Article is filtered out if ANY category is NOT in selected_categories
+                    if selected_categories:
+                        if not article_matches_category_filter(article, selected_categories):
+                            is_included = False
+                    
+                    # Check blacklist
+                    if is_included and blacklist:
+                        title = (article.get('title') or '').lower()
+                        description = (article.get('description') or '').lower()
+                        full_content = (article.get('full_content') or '').lower()
+                        all_text = f"{title} {description} {full_content}"
+                        
+                        for keyword in blacklist:
+                            if keyword.lower().strip() in all_text:
+                                is_included = False
+                                break
+                    
+                    if is_included:
+                        included += 1
+                    else:
+                        excluded += 1
+                
+                # Format date for display
+                try:
+                    from dateutil import parser
+                    date_obj = parser.parse(date_key)
+                    date_display = date_obj.strftime('%d %B %Y')
+                except:
+                    date_display = date_key
+                
+                stats_data.append({
+                    'date': date_display,
+                    'included': included,
+                    'excluded': excluded,
+                    'total': included + excluded
+                })
+            
+            # Display statistics
+            if stats_data:
+                # Summary metrics
+                col1, col2, col3 = st.columns(3)
+                total_included = sum(s['included'] for s in stats_data)
+                total_excluded = sum(s['excluded'] for s in stats_data)
+                total_articles = sum(s['total'] for s in stats_data)
+                
+                with col1:
+                    st.metric("Totaal Inclusief", total_included)
+                with col2:
+                    st.metric("Totaal Uitgesloten", total_excluded)
+                with col3:
+                    st.metric("Totaal Artikelen", total_articles)
+                
+                st.markdown("---")
+                
+                # Daily breakdown
+                st.caption("Per dag:")
+                for stat in stats_data:
+                    if stat['total'] > 0:
+                        percentage_included = (stat['included'] / stat['total']) * 100 if stat['total'] > 0 else 0
+                        st.write(f"**{stat['date']}**")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"✅ Inclusief: {stat['included']} ({percentage_included:.1f}%)")
+                        with col2:
+                            st.write(f"❌ Uitgesloten: {stat['excluded']} ({100 - percentage_included:.1f}%)")
+                        st.progress(percentage_included / 100)
+            else:
+                st.info("Geen artikelen gevonden in de afgelopen 7 dagen.")
+                
+        except Exception as e:
+            st.error(f"Fout bij berekenen statistieken: {str(e)}")
+            import traceback
+            if st.session_state.get('debug_mode', False):
+                st.code(traceback.format_exc())
 
 
 def main():
     """Main Streamlit app."""
+    # Start background scheduler for automatic RSS fetching
+    if not is_scheduler_running():
+        start_background_scheduler()
+    
+    # Render header image with abstract sunrise
+    st.markdown('<div class="header-image-container"></div>', unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    
     # Initialize storage
     supabase = init_supabase()
     if not supabase:
