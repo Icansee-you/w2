@@ -1595,56 +1595,29 @@ def main():
     # This maintains login state across page navigations and Streamlit reruns
     # IMPORTANT: Never auto-login with test@local.com (local storage mock user)
     # 
-    # Strategy: Use multiple methods to restore session:
-    # 1. Check Supabase client's persisted session (from browser localStorage)
-    # 2. If that fails but we have stored tokens, try to verify session is still valid
-    # 3. Always restore user object in Streamlit session state for UI consistency
+    # Strategy: Use cookies to persist session across page reloads
+    # 1. Check cookie for stored access token and user email
+    # 2. If cookie exists, verify session with Supabase and restore user
+    # 3. Fallback to Supabase client's persisted session (localStorage)
     
     if st.session_state.user is None:
         try:
             # Only check for persisted session if we're using Supabase (not LocalStorage)
             from local_storage import LocalStorage
             if not isinstance(supabase, LocalStorage):
-                # Method 1: Try to get user from Supabase client's persisted session
-                # This uses browser localStorage via persist_session=True
-                try:
-                    current_user = supabase.get_current_user()
-                    if current_user:
-                        user_email = get_user_attr(current_user, 'email', '')
-                        # NEVER restore test@local.com - it's a mock user for local testing only
-                        if user_email and user_email.lower() != 'test@local.com':
-                            # Convert to dict format for consistency
-                            if not isinstance(current_user, dict):
-                                st.session_state.user = {
-                                    'id': get_user_attr(current_user, 'id'),
-                                    'email': get_user_attr(current_user, 'email'),
-                                    'created_at': get_user_attr(current_user, 'created_at')
-                                }
-                            else:
-                                st.session_state.user = current_user
-                            st.session_state.preferences = None  # Will be loaded when needed
-                        else:
-                            # Explicitly clear any test@local.com session (shouldn't happen in production)
-                            try:
-                                supabase.sign_out()
-                            except:
-                                pass
-                except Exception as e:
-                    # get_current_user() failed - session might be expired or not available
-                    # This is normal if user hasn't logged in or session expired
-                    pass
+                # Method 1: Check cookie for stored session token
+                cookie_token = get_cookie("supabase_access_token")
+                cookie_email = get_cookie("user_email")
                 
-                # Method 2: If we have stored tokens but no user, the session might still be valid
-                # The Supabase client should have the session, but Streamlit session state was lost
-                # This can happen on page refresh or navigation
-                if st.session_state.user is None and st.session_state.supabase_session_token:
-                    # Try one more time to get user - the Supabase client might have the session
-                    # even if get_current_user() failed before
+                if cookie_token and cookie_email and cookie_email.lower() != 'test@local.com':
+                    # We have a cookie with token and email - try to verify session
                     try:
                         current_user = supabase.get_current_user()
                         if current_user:
                             user_email = get_user_attr(current_user, 'email', '')
-                            if user_email and user_email.lower() != 'test@local.com':
+                            # Verify the email matches the cookie
+                            if user_email and user_email.lower() == cookie_email.lower() and user_email.lower() != 'test@local.com':
+                                # Convert to dict format for consistency
                                 if not isinstance(current_user, dict):
                                     st.session_state.user = {
                                         'id': get_user_attr(current_user, 'id'),
@@ -1653,11 +1626,46 @@ def main():
                                     }
                                 else:
                                     st.session_state.user = current_user
-                                st.session_state.preferences = None
+                                st.session_state.preferences = None  # Will be loaded when needed
+                                # Update session state tokens from cookie
+                                st.session_state.supabase_session_token = cookie_token
                     except Exception:
-                        # Session token might be expired, clear it
-                        st.session_state.supabase_session_token = None
-                        st.session_state.supabase_refresh_token = None
+                        # Session might be expired, clear cookie
+                        set_cookie("supabase_access_token", "")
+                        set_cookie("supabase_refresh_token", "")
+                        set_cookie("user_email", "")
+                
+                # Method 2: Fallback to Supabase client's persisted session (localStorage)
+                if st.session_state.user is None:
+                    try:
+                        current_user = supabase.get_current_user()
+                        if current_user:
+                            user_email = get_user_attr(current_user, 'email', '')
+                            # NEVER restore test@local.com - it's a mock user for local testing only
+                            if user_email and user_email.lower() != 'test@local.com':
+                                # Convert to dict format for consistency
+                                if not isinstance(current_user, dict):
+                                    st.session_state.user = {
+                                        'id': get_user_attr(current_user, 'id'),
+                                        'email': get_user_attr(current_user, 'email'),
+                                        'created_at': get_user_attr(current_user, 'created_at')
+                                    }
+                                else:
+                                    st.session_state.user = current_user
+                                st.session_state.preferences = None  # Will be loaded when needed
+                                
+                                # Also update cookie to keep it in sync
+                                set_cookie("user_email", user_email, days=30)
+                        else:
+                            # No valid session - clear cookies
+                            set_cookie("supabase_access_token", "")
+                            set_cookie("supabase_refresh_token", "")
+                            set_cookie("user_email", "")
+                    except Exception:
+                        # No session available - clear cookies
+                        set_cookie("supabase_access_token", "")
+                        set_cookie("supabase_refresh_token", "")
+                        set_cookie("user_email", "")
         except ImportError:
             # LocalStorage not available - this is fine, we're using Supabase
             pass
