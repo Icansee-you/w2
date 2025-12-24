@@ -46,12 +46,27 @@ st.markdown("""
     /* Horizontal menu */
     .horizontal-menu {
         display: flex;
-        justify-content: center;
+        justify-content: space-between;
+        align-items: center;
         gap: 2rem;
         padding: 1rem 0;
         border-bottom: 2px solid #e0e0e0;
         margin-bottom: 2rem;
         background-color: #ffffff;
+    }
+    
+    .menu-items-container {
+        display: flex;
+        justify-content: center;
+        gap: 2rem;
+        flex: 1;
+    }
+    
+    .user-indicator {
+        font-size: 0.9rem;
+        color: #666;
+        padding: 0.5rem 1rem;
+        white-space: nowrap;
     }
     
     .menu-item {
@@ -313,12 +328,20 @@ def get_user_attr(user, attr: str, default=None):
 
 def render_horizontal_menu():
     """Render horizontal navigation menu."""
-    menu_html = """
+    # Get user email for display
+    user_email = "geen"
+    if st.session_state.user:
+        user_email = get_user_attr(st.session_state.user, 'email', 'geen')
+    
+    menu_html = f"""
     <div class="horizontal-menu">
-        <a class="menu-item" href="?page=Nieuws" onclick="window.location.href='?page=Nieuws'; return false;" target="_self">Nieuws</a>
-        <a class="menu-item" href="?page=Waarom" onclick="window.location.href='?page=Waarom'; return false;" target="_self">Waarom?</a>
-        <a class="menu-item" href="?page=Frustrate" onclick="window.location.href='?page=Frustrate'; return false;" target="_self">Dit wil je niet</a>
-        <a class="menu-item" href="?page=Gebruiker" onclick="window.location.href='?page=Gebruiker'; return false;" target="_self">Gebruiker</a>
+        <div class="menu-items-container">
+            <a class="menu-item" href="?page=Nieuws" onclick="window.location.href='?page=Nieuws'; return false;" target="_self">Nieuws</a>
+            <a class="menu-item" href="?page=Waarom" onclick="window.location.href='?page=Waarom'; return false;" target="_self">Waarom?</a>
+            <a class="menu-item" href="?page=Frustrate" onclick="window.location.href='?page=Frustrate'; return false;" target="_self">Dit wil je niet</a>
+            <a class="menu-item" href="?page=Gebruiker" onclick="window.location.href='?page=Gebruiker'; return false;" target="_self">Gebruiker</a>
+        </div>
+        <div class="user-indicator">Ingelogde gebruiker: {user_email}</div>
     </div>
     """
     st.markdown(menu_html, unsafe_allow_html=True)
