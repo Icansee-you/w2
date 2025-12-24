@@ -109,16 +109,22 @@ class SupabaseClient:
             return False
     
     def get_current_user(self) -> Optional[Dict[str, Any]]:
-        """Get current authenticated user."""
+        """Get current authenticated user from persisted session."""
         try:
-            user = self.client.auth.get_user()
-            if user:
-                return {
-                    "id": user.user.id,
-                    "email": user.user.email,
-                    "created_at": user.user.created_at
-                }
-        except Exception:
+            # First check if there's a session
+            session = self.client.auth.get_session()
+            if session and session.session:
+                # If session exists, get the user
+                user = self.client.auth.get_user()
+                if user and user.user:
+                    return {
+                        "id": user.user.id,
+                        "email": user.user.email,
+                        "created_at": user.user.created_at
+                    }
+        except Exception as e:
+            # No session or session expired - this is normal
+            # Don't log errors as this is expected when user is not logged in
             pass
         return None
     

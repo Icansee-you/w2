@@ -1462,28 +1462,47 @@ def main():
         return
     
     # Check for persisted Supabase session and restore user state if exists
-    # This maintains login state across page navigations
+    # This maintains login state across page navigations and Streamlit reruns
     # IMPORTANT: Never auto-login with test@local.com (local storage mock user)
     if st.session_state.user is None:
         try:
             # Only check for persisted session if we're using Supabase (not LocalStorage)
             from local_storage import LocalStorage
             if not isinstance(supabase, LocalStorage):
-                current_user = supabase.get_current_user()
-                if current_user:
-                    user_email = get_user_attr(current_user, 'email', '')
-                    # NEVER restore test@local.com - it's a mock user for local testing only
-                    if user_email and user_email.lower() != 'test@local.com':
-                        st.session_state.user = current_user
-                        st.session_state.preferences = None  # Will be loaded when needed
-                    else:
-                        # Explicitly clear any test@local.com session (shouldn't happen in production)
-                        try:
-                            supabase.sign_out()
-                        except:
-                            pass
-        except (ImportError, Exception):
-            # No persisted session or error, user needs to log in
+                # Try to get current user from Supabase session
+                # This checks browser localStorage for persisted session
+                try:
+                    current_user = supabase.get_current_user()
+                    if current_user:
+                        user_email = get_user_attr(current_user, 'email', '')
+                        # NEVER restore test@local.com - it's a mock user for local testing only
+                        if user_email and user_email.lower() != 'test@local.com':
+                            # Convert to dict format for consistency
+                            if not isinstance(current_user, dict):
+                                st.session_state.user = {
+                                    'id': get_user_attr(current_user, 'id'),
+                                    'email': get_user_attr(current_user, 'email'),
+                                    'created_at': get_user_attr(current_user, 'created_at')
+                                }
+                            else:
+                                st.session_state.user = current_user
+                            st.session_state.preferences = None  # Will be loaded when needed
+                        else:
+                            # Explicitly clear any test@local.com session (shouldn't happen in production)
+                            try:
+                                supabase.sign_out()
+                            except:
+                                pass
+                except Exception as e:
+                    # get_current_user() failed - no persisted session or session expired
+                    # This is normal if user hasn't logged in or session expired
+                    pass
+        except ImportError:
+            # LocalStorage not available - this is fine, we're using Supabase
+            pass
+        except Exception as e:
+            # Any other error - log but don't fail
+            # User will need to log in manually
             pass
     
     # Render horizontal menu
