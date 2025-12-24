@@ -290,6 +290,10 @@ if 'last_fetch_time' not in st.session_state:
     st.session_state.last_fetch_time = None
 if 'is_fetching' not in st.session_state:
     st.session_state.is_fetching = False
+if 'supabase_session_token' not in st.session_state:
+    st.session_state.supabase_session_token = None
+if 'supabase_refresh_token' not in st.session_state:
+    st.session_state.supabase_refresh_token = None
 
 
 def init_supabase():
@@ -1144,6 +1148,13 @@ def render_gebruiker_page():
                     # Store user in session state - this persists across reruns in the same browser session
                     st.session_state.user = user_dict
                     st.session_state.preferences = None
+                    
+                    # Explicitly store session tokens for restoration
+                    if result.get('access_token'):
+                        st.session_state.supabase_session_token = result.get('access_token')
+                    if result.get('refresh_token'):
+                        st.session_state.supabase_refresh_token = result.get('refresh_token')
+                    
                     # Also verify the session is stored in Supabase client
                     # The Supabase client should have the session from sign_in response
                     st.success("Ingelogd!")
@@ -1183,9 +1194,11 @@ def render_gebruiker_page():
                 # Continue even if sign_out fails
                 pass
             
-            # Clear session state
+            # Clear session state and tokens
             st.session_state.user = None
             st.session_state.preferences = None
+            st.session_state.supabase_session_token = None
+            st.session_state.supabase_refresh_token = None
             
             # Force rerun to update UI
             st.rerun()
