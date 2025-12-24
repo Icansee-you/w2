@@ -63,10 +63,12 @@ st.markdown("""
     }
     
     .user-indicator {
-        font-size: 0.9rem;
-        color: #666;
+        font-size: 0.75rem;
+        color: #888;
         padding: 0.5rem 1rem;
         white-space: nowrap;
+        margin-left: auto;
+        text-align: right;
     }
     
     .menu-item {
