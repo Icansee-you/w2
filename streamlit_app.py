@@ -1085,18 +1085,35 @@ def render_gebruiker_page():
             password = st.text_input("Wachtwoord", type="password", key="login_password")
             
             if st.button("Inloggen", use_container_width=True):
+                # Prevent login with test@local.com (mock user for local testing only)
+                if email.lower() == 'test@local.com':
+                    st.error("Dit is een test account voor lokale ontwikkeling. Gebruik een echt account.")
+                    return
+                
                 result = supabase.sign_in(email, password)
                 if result.get('success'):
                     user = result.get('user')
                     # Convert user to dict if it's a Pydantic object
                     if user and not isinstance(user, dict):
-                        st.session_state.user = {
+                        user_dict = {
                             'id': get_user_attr(user, 'id'),
                             'email': get_user_attr(user, 'email'),
                             'created_at': get_user_attr(user, 'created_at')
                         }
                     else:
-                        st.session_state.user = user
+                        user_dict = user
+                    
+                    # Double-check: never allow test@local.com
+                    user_email = get_user_attr(user_dict, 'email', '')
+                    if user_email and user_email.lower() == 'test@local.com':
+                        st.error("Dit account kan niet worden gebruikt.")
+                        try:
+                            supabase.sign_out()
+                        except:
+                            pass
+                        return
+                    
+                    st.session_state.user = user_dict
                     st.session_state.preferences = None
                     st.success("Ingelogd!")
                     st.rerun()
