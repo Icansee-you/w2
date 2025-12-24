@@ -1124,11 +1124,14 @@ def render_gebruiker_page():
                     st.error(f"Inloggen mislukt: {result.get('error', 'Onbekende fout')}")
         
         with tab2:
-            new_email = st.text_input("Email", key="signup_email")
-            new_password = st.text_input("Wachtwoord", type="password", key="signup_password")
-            confirm_password = st.text_input("Bevestig wachtwoord", type="password", key="signup_confirm")
+            # Use form to enable Enter key submission
+            with st.form("signup_form", clear_on_submit=False):
+                new_email = st.text_input("Email", key="signup_email")
+                new_password = st.text_input("Wachtwoord", type="password", key="signup_password")
+                confirm_password = st.text_input("Bevestig wachtwoord", type="password", key="signup_confirm")
+                signup_submitted = st.form_submit_button("Registreren", use_container_width=True)
             
-            if st.button("Registreren", use_container_width=True):
+            if signup_submitted:
                 if new_password != confirm_password:
                     st.error("Wachtwoorden komen niet overeen")
                 elif len(new_password) < 6:
