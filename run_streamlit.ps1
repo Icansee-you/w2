@@ -50,9 +50,6 @@ if (-not $env:SUPABASE_ANON_KEY) {
 # Check for Supabase credentials
 if ($env:SUPABASE_URL -and $env:SUPABASE_ANON_KEY) {
     Write-Host "[INFO] Supabase credentials detected - using Supabase database" -ForegroundColor Green
-} else {
-    Write-Host "[INFO] No Supabase credentials - using local storage (SQLite)" -ForegroundColor Yellow
-    Write-Host "      To use Supabase, set SUPABASE_URL and SUPABASE_ANON_KEY environment variables" -ForegroundColor Cyan
 }
 
 # Check if streamlit is installed

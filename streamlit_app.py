@@ -281,13 +281,7 @@ def init_supabase():
         if st.session_state.supabase is None:
             st.session_state.supabase = get_supabase_client()
             
-            # Check if using local storage
-            try:
-                from local_storage import LocalStorage
-                if isinstance(st.session_state.supabase, LocalStorage):
-                    st.info("🧪 **Testmodus**: Gebruikt lokale opslag (geen Supabase vereist)")
-            except ImportError:
-                pass
+            # Supabase is initialized (or local storage fallback)
         
         return st.session_state.supabase
     except Exception as e:
@@ -851,7 +845,12 @@ def render_nieuws_page():
             st.error("❌ Opslag niet geïnitialiseerd. Herlaad de pagina.")
             articles = []
         else:
-            categories_filter = selected_categories if (st.session_state.user and selected_categories) else None
+            # Only apply category filter if user is logged in AND has selected categories
+            # If no user is logged in, show all articles (categories_filter = None)
+            if st.session_state.user and selected_categories and len(selected_categories) > 0:
+                categories_filter = selected_categories
+            else:
+                categories_filter = None
             
             # Ensure blacklist is properly formatted
             blacklist_to_use = None
@@ -1436,11 +1435,8 @@ def main():
         st.error("Opslag niet geconfigureerd. Zie de documentatie voor setup instructies.")
         return
     
-    # Check authentication
-    if st.session_state.user is None:
-        user = supabase.get_current_user()
-        if user:
-            st.session_state.user = user
+    # No auto-login - user must explicitly log in
+    # Authentication is handled on the Gebruiker page
     
     # Render horizontal menu
     render_horizontal_menu()
