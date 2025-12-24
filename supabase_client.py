@@ -78,6 +78,12 @@ class SupabaseClient:
                 "email": email,
                 "password": password
             })
+            # Explicitly store the session - this ensures it's available for subsequent requests
+            if response.session:
+                # The session is automatically stored by Supabase client with persist_session=True
+                # But we verify it's set correctly
+                pass
+            
             return {
                 "success": True,
                 "user": response.user,

@@ -1473,14 +1473,20 @@ def main():
     # Check for persisted Supabase session and restore user state if exists
     # This maintains login state across page navigations and Streamlit reruns
     # IMPORTANT: Never auto-login with test@local.com (local storage mock user)
+    # 
+    # Note: In Streamlit Cloud, the Supabase client session is stored in browser localStorage,
+    # but we need to check it on every rerun to restore the user state in Streamlit's session state
     if st.session_state.user is None:
         try:
             # Only check for persisted session if we're using Supabase (not LocalStorage)
             from local_storage import LocalStorage
             if not isinstance(supabase, LocalStorage):
                 # Try to get current user from Supabase session
-                # This checks browser localStorage for persisted session
+                # This checks the Supabase client's internal session state
+                # which is synced with browser localStorage via persist_session=True
                 try:
+                    # Force a check of the session by trying to get the user
+                    # This will use the persisted session from browser storage if available
                     current_user = supabase.get_current_user()
                     if current_user:
                         user_email = get_user_attr(current_user, 'email', '')
@@ -1505,13 +1511,13 @@ def main():
                 except Exception as e:
                     # get_current_user() failed - no persisted session or session expired
                     # This is normal if user hasn't logged in or session expired
+                    # Don't log errors as this is expected behavior
                     pass
         except ImportError:
             # LocalStorage not available - this is fine, we're using Supabase
             pass
         except Exception as e:
-            # Any other error - log but don't fail
-            # User will need to log in manually
+            # Any other error - don't log, user will need to log in manually
             pass
     
     # Render horizontal menu
