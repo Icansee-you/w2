@@ -1113,8 +1113,11 @@ def render_gebruiker_page():
                             pass
                         return
                     
+                    # Store user in session state - this persists across reruns in the same browser session
                     st.session_state.user = user_dict
                     st.session_state.preferences = None
+                    # Also verify the session is stored in Supabase client
+                    # The Supabase client should have the session from sign_in response
                     st.success("Ingelogd!")
                     st.rerun()
                 else:
