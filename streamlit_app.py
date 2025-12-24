@@ -1435,8 +1435,16 @@ def main():
         st.error("Opslag niet geconfigureerd. Zie de documentatie voor setup instructies.")
         return
     
-    # No auto-login - user must explicitly log in
-    # Authentication is handled on the Gebruiker page
+    # Check for persisted Supabase session and restore user state if exists
+    # This maintains login state across page navigations
+    if st.session_state.user is None:
+        try:
+            current_user = supabase.get_current_user()
+            if current_user:
+                st.session_state.user = current_user
+                st.session_state.preferences = None  # Will be loaded when needed
+        except Exception:
+            pass  # No persisted session, user needs to log in
     
     # Render horizontal menu
     render_horizontal_menu()
