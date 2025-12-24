@@ -1446,14 +1446,28 @@ def main():
     
     # Check for persisted Supabase session and restore user state if exists
     # This maintains login state across page navigations
+    # IMPORTANT: Never auto-login with test@local.com (local storage mock user)
     if st.session_state.user is None:
         try:
-            current_user = supabase.get_current_user()
-            if current_user:
-                st.session_state.user = current_user
-                st.session_state.preferences = None  # Will be loaded when needed
-        except Exception:
-            pass  # No persisted session, user needs to log in
+            # Only check for persisted session if we're using Supabase (not LocalStorage)
+            from local_storage import LocalStorage
+            if not isinstance(supabase, LocalStorage):
+                current_user = supabase.get_current_user()
+                if current_user:
+                    user_email = get_user_attr(current_user, 'email', '')
+                    # NEVER restore test@local.com - it's a mock user for local testing only
+                    if user_email and user_email.lower() != 'test@local.com':
+                        st.session_state.user = current_user
+                        st.session_state.preferences = None  # Will be loaded when needed
+                    else:
+                        # Explicitly clear any test@local.com session (shouldn't happen in production)
+                        try:
+                            supabase.sign_out()
+                        except:
+                            pass
+        except (ImportError, Exception):
+            # No persisted session or error, user needs to log in
+            pass
     
     # Render horizontal menu
     render_horizontal_menu()
