@@ -92,9 +92,20 @@ class SupabaseClient:
     def sign_out(self) -> bool:
         """Sign out current user."""
         try:
+            # Sign out and clear session
             self.client.auth.sign_out()
+            # Also try to clear any persisted session
+            try:
+                # Clear session from storage if possible
+                session = self.client.auth.get_session()
+                if session:
+                    self.client.auth.sign_out()
+            except:
+                pass
             return True
-        except Exception:
+        except Exception as e:
+            # Log error but don't fail
+            print(f"Error signing out: {e}")
             return False
     
     def get_current_user(self) -> Optional[Dict[str, Any]]:

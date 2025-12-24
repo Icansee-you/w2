@@ -1125,9 +1125,18 @@ def render_gebruiker_page():
         st.success(f"👤 Ingelogd als: {user_email}")
         
         if st.button("🚪 Uitloggen", use_container_width=True):
-            supabase.sign_out()
+            # Sign out from Supabase
+            try:
+                supabase.sign_out()
+            except Exception as e:
+                # Continue even if sign_out fails
+                pass
+            
+            # Clear session state
             st.session_state.user = None
             st.session_state.preferences = None
+            
+            # Force rerun to update UI
             st.rerun()
         
         st.markdown("---")
