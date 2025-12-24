@@ -319,36 +319,52 @@ def set_cookie(name: str, value: str, days: int = 30):
 
 def get_cookie(name: str) -> Optional[str]:
     """Get a cookie value using JavaScript and return via query params."""
-    # Use a hidden component to read cookie and pass to Python
     cookie_key = f"_cookie_{name}"
-    if cookie_key not in st.session_state:
-        # Inject JavaScript to read cookie and set it in session state
-        js_code = f"""
-        <script>
+    
+    # Check if we already have it in session state
+    if cookie_key in st.session_state:
+        return st.session_state[cookie_key]
+    
+    # Use JavaScript to read cookie and pass to Python via query params
+    # This will work on the next rerun
+    js_code = f"""
+    <script>
+    (function() {{
         function getCookie(name) {{
             const value = `; ${{document.cookie}}`;
             const parts = value.split(`; ${{name}}=`);
-            if (parts.length === 2) return parts.pop().split(';').shift();
+            if (parts.length === 2) {{
+                const val = parts.pop().split(';').shift();
+                // Store in URL query params so Python can read it
+                const url = new URL(window.location);
+                if (val) {{
+                    url.searchParams.set("_cookie_{name}", val);
+                    window.history.replaceState({{}}, '', url);
+                }}
+                return val;
+            }}
             return null;
         }}
-        const cookieValue = getCookie("{name}");
-        if (cookieValue) {{
-            // Store in Streamlit session state via URL parameter
-            const url = new URL(window.location);
-            url.searchParams.set("_cookie_{name}", cookieValue);
-            window.history.replaceState({{}}, '', url);
-        }}
-        </script>
-        """
-        st.markdown(js_code, unsafe_allow_html=True)
-        
-        # Try to get from query params (set by JavaScript)
-        cookie_value = st.query_params.get(f"_cookie_{name}")
-        if cookie_value:
-            st.session_state[cookie_key] = cookie_value
-            return cookie_value
+        getCookie("{name}");
+    }})();
+    </script>
+    """
+    st.markdown(js_code, unsafe_allow_html=True)
     
-    return st.session_state.get(cookie_key)
+    # Try to read from query params (set by JavaScript)
+    cookie_value = st.query_params.get(f"_cookie_{name}")
+    if cookie_value:
+        st.session_state[cookie_key] = cookie_value
+        # Clean up query param after reading
+        params = dict(st.query_params)
+        if f"_cookie_{name}" in params:
+            del params[f"_cookie_{name}"]
+            st.query_params.clear()
+            for k, v in params.items():
+                st.query_params[k] = v
+        return cookie_value
+    
+    return None
 
 
 def init_supabase():
@@ -1204,11 +1220,18 @@ def render_gebruiker_page():
                     st.session_state.user = user_dict
                     st.session_state.preferences = None
                     
-                    # Explicitly store session tokens for restoration
+                    # Store session token in cookie for persistence across page reloads
                     if result.get('access_token'):
+                        # Store in cookie (30 days expiration)
+                        set_cookie("supabase_access_token", result.get('access_token'), days=30)
                         st.session_state.supabase_session_token = result.get('access_token')
                     if result.get('refresh_token'):
+                        set_cookie("supabase_refresh_token", result.get('refresh_token'), days=30)
                         st.session_state.supabase_refresh_token = result.get('refresh_token')
+                    
+                    # Also store user email in cookie for quick display
+                    if user_email:
+                        set_cookie("user_email", user_email, days=30)
                     
                     # Also verify the session is stored in Supabase client
                     # The Supabase client should have the session from sign_in response
