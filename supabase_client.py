@@ -117,21 +117,33 @@ class SupabaseClient:
     def get_current_user(self) -> Optional[Dict[str, Any]]:
         """Get current authenticated user from persisted session."""
         try:
-            # First check if there's a session
-            session = self.client.auth.get_session()
-            if session and session.session:
-                # If session exists, get the user
-                user = self.client.auth.get_user()
-                if user and user.user:
-                    return {
-                        "id": user.user.id,
-                        "email": user.user.email,
-                        "created_at": user.user.created_at
-                    }
+            # Try to get the user directly - Supabase client will use persisted session
+            # if available (from browser localStorage via persist_session=True)
+            # This works because Supabase's Python client syncs with browser localStorage
+            user_response = self.client.auth.get_user()
+            if user_response and user_response.user:
+                return {
+                    "id": user_response.user.id,
+                    "email": user_response.user.email,
+                    "created_at": user_response.user.created_at
+                }
         except Exception as e:
-            # No session or session expired - this is normal
-            # Don't log errors as this is expected when user is not logged in
+            # get_user() will raise an exception if no valid session exists
+            # This is normal when user is not logged in - don't log errors
             pass
+        
+        # Fallback: try to get session explicitly
+        try:
+            session = self.client.auth.get_session()
+            if session and hasattr(session, 'user') and session.user:
+                return {
+                    "id": session.user.id,
+                    "email": session.user.email,
+                    "created_at": session.user.created_at
+                }
+        except Exception:
+            pass
+        
         return None
     
     def get_session(self):
