@@ -296,6 +296,61 @@ if 'supabase_refresh_token' not in st.session_state:
     st.session_state.supabase_refresh_token = None
 
 
+def set_cookie(name: str, value: str, days: int = 30):
+    """Set a cookie using JavaScript."""
+    if not value:
+        # Delete cookie
+        js_code = f"""
+        <script>
+        document.cookie = "{name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+        </script>
+        """
+    else:
+        # Set cookie with expiration
+        js_code = f"""
+        <script>
+        const expires = new Date();
+        expires.setTime(expires.getTime() + ({days} * 24 * 60 * 60 * 1000));
+        document.cookie = "{name}={value}; expires=" + expires.toUTCString() + "; path=/; SameSite=Lax";
+        </script>
+        """
+    st.markdown(js_code, unsafe_allow_html=True)
+
+
+def get_cookie(name: str) -> Optional[str]:
+    """Get a cookie value using JavaScript and return via query params."""
+    # Use a hidden component to read cookie and pass to Python
+    cookie_key = f"_cookie_{name}"
+    if cookie_key not in st.session_state:
+        # Inject JavaScript to read cookie and set it in session state
+        js_code = f"""
+        <script>
+        function getCookie(name) {{
+            const value = `; ${{document.cookie}}`;
+            const parts = value.split(`; ${{name}}=`);
+            if (parts.length === 2) return parts.pop().split(';').shift();
+            return null;
+        }}
+        const cookieValue = getCookie("{name}");
+        if (cookieValue) {{
+            // Store in Streamlit session state via URL parameter
+            const url = new URL(window.location);
+            url.searchParams.set("_cookie_{name}", cookieValue);
+            window.history.replaceState({{}}, '', url);
+        }}
+        </script>
+        """
+        st.markdown(js_code, unsafe_allow_html=True)
+        
+        # Try to get from query params (set by JavaScript)
+        cookie_value = st.query_params.get(f"_cookie_{name}")
+        if cookie_value:
+            st.session_state[cookie_key] = cookie_value
+            return cookie_value
+    
+    return st.session_state.get(cookie_key)
+
+
 def init_supabase():
     """Initialize Supabase client or local storage."""
     try:
@@ -1199,6 +1254,11 @@ def render_gebruiker_page():
             st.session_state.preferences = None
             st.session_state.supabase_session_token = None
             st.session_state.supabase_refresh_token = None
+            
+            # Clear cookies
+            set_cookie("supabase_access_token", "")
+            set_cookie("supabase_refresh_token", "")
+            set_cookie("user_email", "")
             
             # Force rerun to update UI
             st.rerun()
