@@ -1081,10 +1081,13 @@ def render_gebruiker_page():
         tab1, tab2 = st.tabs(["Inloggen", "Registreren"])
         
         with tab1:
-            email = st.text_input("Email", key="login_email")
-            password = st.text_input("Wachtwoord", type="password", key="login_password")
+            # Use form to enable Enter key submission
+            with st.form("login_form", clear_on_submit=False):
+                email = st.text_input("Email", key="login_email")
+                password = st.text_input("Wachtwoord", type="password", key="login_password")
+                login_submitted = st.form_submit_button("Inloggen", use_container_width=True)
             
-            if st.button("Inloggen", use_container_width=True):
+            if login_submitted:
                 # Prevent login with test@local.com (mock user for local testing only)
                 if email.lower() == 'test@local.com':
                     st.error("Dit is een test account voor lokale ontwikkeling. Gebruik een echt account.")
