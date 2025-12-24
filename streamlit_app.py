@@ -622,20 +622,19 @@ def ensure_eli5_summary(article: Dict[str, Any], supabase, generate_if_missing: 
         if generate_if_missing:
             # Generate ELI5 summary (can take 30+ seconds - use with caution)
             with st.spinner("Eenvoudige uitleg genereren..."):
-        text = f"{article.get('title', '')} {article.get('description', '')}"
-        if article.get('full_content'):
-            text += f" {article.get('full_content', '')[:1000]}"
-        
-        result = generate_eli5_summary_nl_with_llm(text, article.get('title', ''))
-        if result and result.get('summary'):
-            article['eli5_summary_nl'] = result['summary']
-            article['eli5_llm'] = result.get('llm', 'Onbekend')
-            # Save to database
-            supabase.update_article_eli5(article['id'], result['summary'], result.get('llm'))
-        else:
+                text = f"{article.get('title', '')} {article.get('description', '')}"
+                if article.get('full_content'):
+                    text += f" {article.get('full_content', '')[:1000]}"
+                
+                result = generate_eli5_summary_nl_with_llm(text, article.get('title', ''))
+                if result and result.get('summary'):
+                    article['eli5_summary_nl'] = result['summary']
+                    article['eli5_llm'] = result.get('llm', 'Onbekend')
+                    # Save to database
+                    supabase.update_article_eli5(article['id'], result['summary'], result.get('llm'))
+                else:
                     article['eli5_summary_nl'] = None
                     article['eli5_llm'] = None
-        else:
             # Don't generate, just return existing or None
             article['eli5_summary_nl'] = None
             article['eli5_llm'] = None
@@ -653,18 +652,18 @@ def render_article_card(article: Dict[str, Any], supabase):
     # Create a container for the clickable card
     with st.container():
         # Image
-    if article.get('image_url'):
+        if article.get('image_url'):
             try:
                 st.image(article['image_url'], use_container_width=True)
             except:
                 pass
     
         # Title (clickable - this is the main way to open article)
-    title = article.get('title', 'Geen titel')
+        title = article.get('title', 'Geen titel')
         title_display = title[:70] + "..." if len(title) > 70 else title
         if st.button(title_display, key=f"article_{article_id}", use_container_width=True):
-        st.query_params["article"] = article_id
-        st.rerun()
+            st.query_params["article"] = article_id
+            st.rerun()
     
         # Summary from article content (first sentences) - clickable
         full_content = article.get('full_content', '')
@@ -714,7 +713,7 @@ def render_article_detail(article_id: str):
     # Layout: Image on left, Categorization info on right
     col_img, col_cat = st.columns([1, 1])
     
-        with col_img:
+    with col_img:
         # Image on the left
         if article.get('image_url'):
             try:
@@ -724,50 +723,50 @@ def render_article_detail(article_id: str):
     
     with col_cat:
         # Categorization information on the right
-    categories = article.get('categories', [])
-    
-    # Handle categories if they're stored as a string (JSON) or list
-    if isinstance(categories, str):
-        try:
-            import json
-            categories = json.loads(categories)
-        except:
-            # If it's a string but not JSON, try to parse it manually
-            if categories.strip().startswith('['):
-                # Remove brackets and split by comma
-                categories = [c.strip().strip('"\'') for c in categories.strip('[]').split(',') if c.strip()]
-            else:
-                categories = []
-    
-    # Ensure categories is a list
-    if not isinstance(categories, list):
-        categories = []
-    
-    if categories and len(categories) > 0:
-        st.subheader("Categorieën")
-        # Display categories in a horizontal flex container
-        # Use proper HTML escaping for category names
-        from html import escape
-        categories_html = '<div class="categories-container">'
-        for cat in categories:
-            if cat:  # Only add non-empty categories
-                escaped_cat = escape(str(cat))
-                categories_html += f'<span class="article-category">{escaped_cat}</span>'
-        categories_html += '</div>'
-        st.markdown(categories_html, unsafe_allow_html=True)
+        categories = article.get('categories', [])
         
-        # Show which LLM was used for categorization
-        categorization_llm = article.get('categorization_llm', 'Keywords')
-        if categorization_llm and categorization_llm != 'Keywords':
-            llm_display = {
-                'Hugging Face': 'Hugging Face',
-                'Groq': 'Groq',
-                'OpenAI': 'OpenAI',
-                'ChatLLM': 'ChatLLM (Aitomatic)'
-            }.get(categorization_llm, categorization_llm)
-            st.caption(f"📊 Categorisatie door: {llm_display}")
-        else:
-            st.caption("📊 Categorisatie door: Keywords (geen LLM)")
+        # Handle categories if they're stored as a string (JSON) or list
+        if isinstance(categories, str):
+            try:
+                import json
+                categories = json.loads(categories)
+            except:
+                # If it's a string but not JSON, try to parse it manually
+                if categories.strip().startswith('['):
+                    # Remove brackets and split by comma
+                    categories = [c.strip().strip('"\'') for c in categories.strip('[]').split(',') if c.strip()]
+                else:
+                    categories = []
+        
+        # Ensure categories is a list
+        if not isinstance(categories, list):
+            categories = []
+        
+        if categories and len(categories) > 0:
+            st.subheader("Categorieën")
+            # Display categories in a horizontal flex container
+            # Use proper HTML escaping for category names
+            from html import escape
+            categories_html = '<div class="categories-container">'
+            for cat in categories:
+                if cat:  # Only add non-empty categories
+                    escaped_cat = escape(str(cat))
+                    categories_html += f'<span class="article-category">{escaped_cat}</span>'
+            categories_html += '</div>'
+            st.markdown(categories_html, unsafe_allow_html=True)
+            
+            # Show which LLM was used for categorization
+            categorization_llm = article.get('categorization_llm', 'Keywords')
+            if categorization_llm and categorization_llm != 'Keywords':
+                llm_display = {
+                    'Hugging Face': 'Hugging Face',
+                    'Groq': 'Groq',
+                    'OpenAI': 'OpenAI',
+                    'ChatLLM': 'ChatLLM (Aitomatic)'
+                }.get(categorization_llm, categorization_llm)
+                st.caption(f"📊 Categorisatie door: {llm_display}")
+            else:
+                st.caption("📊 Categorisatie door: Keywords (geen LLM)")
         else:
             st.subheader("Categorieën")
             st.info("Geen categorieën beschikbaar")
@@ -865,25 +864,25 @@ def check_and_fetch_new_articles():
         
         try:
             for feed_url in feed_urls:
-            try:
-                # Use LLM categorization for better accuracy
-                result = fetch_and_upsert_articles(feed_url, max_items=30, use_llm_categorization=True)
-                if result.get('success'):
-                    total_inserted += result.get('inserted', 0)
-                    total_updated += result.get('updated', 0)
-            except Exception as e:
+                try:
+                    # Use LLM categorization for better accuracy
+                    result = fetch_and_upsert_articles(feed_url, max_items=30, use_llm_categorization=True)
+                    if result.get('success'):
+                        total_inserted += result.get('inserted', 0)
+                        total_updated += result.get('updated', 0)
+                except Exception as e:
                     # Silently log errors but continue
                     pass
         
             # Update last fetch time
             st.session_state.last_fetch_time = time.time()
-        
+            
             # Show brief status message
-        if total_inserted > 0 or total_updated > 0:
+            if total_inserted > 0 or total_updated > 0:
                 status_placeholder.success(f"✅ {total_inserted} nieuwe artikelen gevonden")
                 time.sleep(2)  # Show message briefly
                 status_placeholder.empty()
-        else:
+            else:
                 status_placeholder.empty()
                 
         except Exception as e:
@@ -962,28 +961,28 @@ def render_nieuws_page():
         
         articles = supabase.get_articles(
             limit=50,
-                category=None,
+            category=None,
             categories=categories_filter,
-                search_query=None,
+            search_query=None,
             blacklist_keywords=blacklist_to_use
         )
-            
-            # Debug output if no articles found
-            if len(articles) == 0:
-                # Try fetching without category filters to see if that works
-                test_articles = supabase.get_articles(limit=5, category=None, categories=None, search_query=None, blacklist_keywords=blacklist_to_use)
-                if len(test_articles) > 0:
-                    if selected_categories and len(selected_categories) > 0:
-                        st.warning(f"⚠️ Geen artikelen gevonden met de geselecteerde categorieën. Zonder categorie filter: {len(test_articles)} artikelen beschikbaar.")
-                        st.info("💡 Tip: Selecteer meer categorieën op de 'Gebruiker' pagina, of controleer of artikelen de juiste categorieën hebben.")
-                    else:
-                        st.info("ℹ️ Geen artikelen gevonden. Controleer of er artikelen in de database staan.")
+        
+        # Debug output if no articles found
+        if len(articles) == 0:
+            # Try fetching without category filters to see if that works
+            test_articles = supabase.get_articles(limit=5, category=None, categories=None, search_query=None, blacklist_keywords=blacklist_to_use)
+            if len(test_articles) > 0:
+                if selected_categories and len(selected_categories) > 0:
+                    st.warning(f"⚠️ Geen artikelen gevonden met de geselecteerde categorieën. Zonder categorie filter: {len(test_articles)} artikelen beschikbaar.")
+                    st.info("💡 Tip: Selecteer meer categorieën op de 'Gebruiker' pagina, of controleer of artikelen de juiste categorieën hebben.")
                 else:
-                    st.warning("⚠️ Geen artikelen in database. Wacht even tot artikelen worden opgehaald...")
-            
-            # Debug: Show article count if in debug mode
-            if st.session_state.get('debug_mode', False):
-                st.info(f"🔍 Debug: {len(articles)} artikelen opgehaald")
+                    st.info("ℹ️ Geen artikelen gevonden. Controleer of er artikelen in de database staan.")
+            else:
+                st.warning("⚠️ Geen artikelen in database. Wacht even tot artikelen worden opgehaald...")
+        
+        # Debug: Show article count if in debug mode
+        if st.session_state.get('debug_mode', False):
+            st.info(f"🔍 Debug: {len(articles)} artikelen opgehaald")
     except Exception as e:
         st.error(f"Fout bij ophalen artikelen: {str(e)}")
         import traceback
@@ -1110,7 +1109,7 @@ def render_frustrate_page():
         
         # Now manually filter to find articles that WOULD be filtered
         filtered_articles = []
-            for article in all_articles:
+        for article in all_articles:
             is_filtered = False
             filter_reason = []
             
@@ -1139,7 +1138,7 @@ def render_frustrate_page():
             
             if is_filtered:
                 article['_filter_reason'] = ', '.join(filter_reason)
-                        filtered_articles.append(article)
+                filtered_articles.append(article)
         
         if filtered_articles:
             st.subheader(f"📋 {len(filtered_articles)} uitgefilterde artikelen")
@@ -1183,8 +1182,8 @@ def render_gebruiker_page():
         with tab1:
             # Use form to enable Enter key submission
             with st.form("login_form", clear_on_submit=False):
-            email = st.text_input("Email", key="login_email")
-            password = st.text_input("Wachtwoord", type="password", key="login_password")
+                email = st.text_input("Email", key="login_email")
+                password = st.text_input("Wachtwoord", type="password", key="login_password")
                 login_submitted = st.form_submit_button("Inloggen", use_container_width=True)
             
             if login_submitted:
@@ -1243,9 +1242,9 @@ def render_gebruiker_page():
         with tab2:
             # Use form to enable Enter key submission
             with st.form("signup_form", clear_on_submit=False):
-            new_email = st.text_input("Email", key="signup_email")
-            new_password = st.text_input("Wachtwoord", type="password", key="signup_password")
-            confirm_password = st.text_input("Bevestig wachtwoord", type="password", key="signup_confirm")
+                new_email = st.text_input("Email", key="signup_email")
+                new_password = st.text_input("Wachtwoord", type="password", key="signup_password")
+                confirm_password = st.text_input("Bevestig wachtwoord", type="password", key="signup_confirm")
                 signup_submitted = st.form_submit_button("Registreren", use_container_width=True)
             
             if signup_submitted:
@@ -1267,7 +1266,7 @@ def render_gebruiker_page():
         if st.button("🚪 Uitloggen", use_container_width=True):
             # Sign out from Supabase
             try:
-            supabase.sign_out()
+                supabase.sign_out()
             except Exception as e:
                 # Continue even if sign_out fails
                 pass
