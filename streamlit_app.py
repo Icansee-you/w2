@@ -1512,19 +1512,19 @@ def main():
     # This maintains login state across page navigations and Streamlit reruns
     # IMPORTANT: Never auto-login with test@local.com (local storage mock user)
     # 
-    # Note: In Streamlit Cloud, the Supabase client session is stored in browser localStorage,
-    # but we need to check it on every rerun to restore the user state in Streamlit's session state
+    # Strategy: Use multiple methods to restore session:
+    # 1. Check Supabase client's persisted session (from browser localStorage)
+    # 2. If that fails but we have stored tokens, try to verify session is still valid
+    # 3. Always restore user object in Streamlit session state for UI consistency
+    
     if st.session_state.user is None:
         try:
             # Only check for persisted session if we're using Supabase (not LocalStorage)
             from local_storage import LocalStorage
             if not isinstance(supabase, LocalStorage):
-                # Try to get current user from Supabase session
-                # This checks the Supabase client's internal session state
-                # which is synced with browser localStorage via persist_session=True
+                # Method 1: Try to get user from Supabase client's persisted session
+                # This uses browser localStorage via persist_session=True
                 try:
-                    # Force a check of the session by trying to get the user
-                    # This will use the persisted session from browser storage if available
                     current_user = supabase.get_current_user()
                     if current_user:
                         user_email = get_user_attr(current_user, 'email', '')
@@ -1547,10 +1547,34 @@ def main():
                             except:
                                 pass
                 except Exception as e:
-                    # get_current_user() failed - no persisted session or session expired
+                    # get_current_user() failed - session might be expired or not available
                     # This is normal if user hasn't logged in or session expired
-                    # Don't log errors as this is expected behavior
                     pass
+                
+                # Method 2: If we have stored tokens but no user, the session might still be valid
+                # The Supabase client should have the session, but Streamlit session state was lost
+                # This can happen on page refresh or navigation
+                if st.session_state.user is None and st.session_state.supabase_session_token:
+                    # Try one more time to get user - the Supabase client might have the session
+                    # even if get_current_user() failed before
+                    try:
+                        current_user = supabase.get_current_user()
+                        if current_user:
+                            user_email = get_user_attr(current_user, 'email', '')
+                            if user_email and user_email.lower() != 'test@local.com':
+                                if not isinstance(current_user, dict):
+                                    st.session_state.user = {
+                                        'id': get_user_attr(current_user, 'id'),
+                                        'email': get_user_attr(current_user, 'email'),
+                                        'created_at': get_user_attr(current_user, 'created_at')
+                                    }
+                                else:
+                                    st.session_state.user = current_user
+                                st.session_state.preferences = None
+                    except Exception:
+                        # Session token might be expired, clear it
+                        st.session_state.supabase_session_token = None
+                        st.session_state.supabase_refresh_token = None
         except ImportError:
             # LocalStorage not available - this is fine, we're using Supabase
             pass

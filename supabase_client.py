@@ -78,16 +78,20 @@ class SupabaseClient:
                 "email": email,
                 "password": password
             })
-            # Explicitly store the session - this ensures it's available for subsequent requests
+            
+            # Extract session tokens for explicit storage
+            session_token = None
+            refresh_token = None
             if response.session:
-                # The session is automatically stored by Supabase client with persist_session=True
-                # But we verify it's set correctly
-                pass
+                session_token = response.session.access_token
+                refresh_token = response.session.refresh_token
             
             return {
                 "success": True,
                 "user": response.user,
-                "session": response.session
+                "session": response.session,
+                "access_token": session_token,
+                "refresh_token": refresh_token
             }
         except Exception as e:
             return {
