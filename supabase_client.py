@@ -157,6 +157,63 @@ class SupabaseClient:
         except Exception:
             return None
     
+    def set_session(self, access_token: str, refresh_token: str) -> Optional[Dict[str, Any]]:
+        """Set the Supabase session using provided access and refresh tokens."""
+        try:
+            # Try to set session using Supabase's set_session method
+            # The API may vary by version, so we try multiple approaches
+            try:
+                # Method 1: Direct set_session call (newer API)
+                response = self.client.auth.set_session(access_token, refresh_token)
+                if response and hasattr(response, 'user') and response.user:
+                    return {
+                        "success": True,
+                        "user": response.user,
+                        "session": response.session if hasattr(response, 'session') else None
+                    }
+            except (TypeError, AttributeError):
+                # Method 2: Try with dict format (older API)
+                try:
+                    response = self.client.auth.set_session({
+                        "access_token": access_token,
+                        "refresh_token": refresh_token
+                    })
+                    if response and hasattr(response, 'user') and response.user:
+                        return {
+                            "success": True,
+                            "user": response.user,
+                            "session": response.session if hasattr(response, 'session') else None
+                        }
+                except Exception:
+                    pass
+            
+            # Method 3: Manually set tokens and then get user
+            # Store tokens in the client's internal storage
+            try:
+                # Set the session by calling refresh_session which will validate tokens
+                refresh_response = self.client.auth.refresh_session(refresh_token)
+                if refresh_response and hasattr(refresh_response, 'user') and refresh_response.user:
+                    return {
+                        "success": True,
+                        "user": refresh_response.user,
+                        "session": refresh_response.session if hasattr(refresh_response, 'session') else None
+                    }
+            except Exception:
+                pass
+            
+            # If all methods fail, try to get user directly (session might already be set)
+            user_response = self.client.auth.get_user()
+            if user_response and user_response.user:
+                return {
+                    "success": True,
+                    "user": user_response.user,
+                    "session": None
+                }
+            
+            return {"success": False, "error": "Failed to set session"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
     # User preferences methods
     def get_user_preferences(self, user_id: str) -> Dict[str, Any]:
         """Get user preferences including blacklist."""
