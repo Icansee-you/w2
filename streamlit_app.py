@@ -41,18 +41,90 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Hide default Streamlit menu and footer
+# CSS om de header en extra whitespace te verwijderen - Agressieve aanpak
 st.markdown("""
     <style>
+    /* Verberg de standaard Streamlit-header volledig */
+    header[data-testid="stHeader"] {
+        height: 0px !important;
+        min-height: 0px !important;
+        visibility: hidden !important;
+        display: none !important;
+    }
+    
+    /* Verberg alle header elementen */
+    .stApp > header,
+    header[data-testid="stHeader"],
+    div[data-testid="stHeader"] {
+        height: 0px !important;
+        min-height: 0px !important;
+        max-height: 0px !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        visibility: hidden !important;
+        display: none !important;
+        overflow: hidden !important;
+    }
+    
+    /* Verklein de padding van de hoofdcontainer - meerdere selectors */
+    .main .block-container,
+    .block-container,
+    div[data-testid="stAppViewContainer"] > .main .block-container {
+        padding-top: 0rem !important;
+        padding-bottom: 1rem !important;
+        margin-top: 0rem !important;
+        max-width: 100% !important;
+    }
+    
+    /* Target de app view container zelf */
+    section[data-testid="stAppViewContainer"],
+    div[data-testid="stAppViewContainer"] {
+        padding-top: 0rem !important;
+        margin-top: 0rem !important;
+    }
+    
+    /* Target de stApp container */
+    .stApp {
+        padding-top: 0rem !important;
+        margin-top: 0rem !important;
+    }
+    
+    /* Hide default Streamlit menu and footer */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
     
-    /* Remove top white space - conservative approach */
-    .main .block-container {
-        padding-top: 0 !important;
-        padding-bottom: 1rem !important;
+    /* Remove spacing from first element in main container */
+    .main .block-container > div:first-child,
+    .main > div:first-child,
+    .main .block-container > *:first-child {
         margin-top: 0 !important;
+        padding-top: 0 !important;
+    }
+    
+    /* Reduce spacing in block containers */
+    [data-testid="stVerticalBlock"] {
+        gap: 0.5rem !important;
+    }
+    
+    /* First vertical block should have no top margin */
+    [data-testid="stVerticalBlock"]:first-child,
+    [data-testid="stVerticalBlock"]:nth-child(1) {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+        margin-bottom: 0 !important;
+    }
+    
+    /* Target element containers */
+    .element-container:first-child,
+    .element-container:nth-child(1) {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+    }
+    
+    /* Remove any top spacing from the horizontal menu container */
+    .horizontal-menu {
+        margin-top: 0 !important;
+        padding-top: 0.5rem !important;
     }
     
     /* Extra: Remove top spacing on article detail pages */
@@ -66,70 +138,29 @@ st.markdown("""
         padding-top: 0 !important;
     }
     
-    .stApp > header {
-        padding-top: 0 !important;
-        padding-bottom: 0 !important;
-        margin-top: 0 !important;
-        margin-bottom: 0 !important;
-        height: 0 !important;
-        display: none !important;
-    }
-    
-    /* Remove top margin from first element */
-    .main .block-container > div:first-child {
+    /* Target markdown containers */
+    .stMarkdown:first-child,
+    .stMarkdown:nth-child(1) {
         margin-top: 0 !important;
         padding-top: 0 !important;
     }
     
-    /* Reduce spacing in Streamlit app container */
-    .stApp {
-        padding-top: 0 !important;
-        margin-top: 0 !important;
-    }
-    
-    /* Target the main content area */
-    section[data-testid="stAppViewContainer"] {
-        padding-top: 0 !important;
-        margin-top: 0 !important;
-    }
-    
-    /* Reduce spacing in block containers */
-    [data-testid="stVerticalBlock"] {
-        gap: 0.5rem !important;
-    }
-    
-    /* First vertical block should have no top margin */
-    [data-testid="stVerticalBlock"]:first-child {
+    /* Remove spacing from Streamlit's internal spacing elements */
+    .stApp > div:first-child,
+    .stApp > section:first-child {
         margin-top: 0 !important;
         padding-top: 0 !important;
     }
     
-    /* Remove top spacing from the first markdown element (horizontal menu) */
-    .main .block-container > div:first-child > div:first-child {
-        margin-top: 0 !important;
+    /* Target all possible spacing sources */
+    div[class*="block-container"]:first-child {
         padding-top: 0 !important;
-    }
-    
-    /* Target Streamlit's default spacing */
-    .element-container:first-child {
         margin-top: 0 !important;
-        padding-top: 0 !important;
     }
     
-    /* Remove any top spacing from the horizontal menu container */
-    .horizontal-menu {
-        margin-top: 0 !important;
-        padding-top: 0.5rem !important;
-    }
-    
-    /* Additional aggressive spacing removal */
-    div[data-testid="stVerticalBlock"]:first-child {
-        margin-top: 0 !important;
-        padding-top: 0 !important;
-    }
-    
-    /* Remove top spacing from all first-level children */
-    .main > div:first-child {
+    /* Remove any top margin/padding from the very first element */
+    body > div:first-child,
+    #root > div:first-child {
         margin-top: 0 !important;
         padding-top: 0 !important;
     }
@@ -398,6 +429,73 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
+
+# JavaScript om dynamisch whitespace te verwijderen (backup voor CSS)
+st.markdown("""
+    <script>
+    (function() {
+        function removeTopWhitespace() {
+            // Verberg header
+            const headers = document.querySelectorAll('header[data-testid="stHeader"], .stApp > header, div[data-testid="stHeader"]');
+            headers.forEach(header => {
+                header.style.height = '0px';
+                header.style.minHeight = '0px';
+                header.style.maxHeight = '0px';
+                header.style.padding = '0';
+                header.style.margin = '0';
+                header.style.visibility = 'hidden';
+                header.style.display = 'none';
+            });
+            
+            // Verwijder padding/margin van block-container
+            const containers = document.querySelectorAll('.main .block-container, .block-container');
+            containers.forEach(container => {
+                container.style.paddingTop = '0rem';
+                container.style.marginTop = '0rem';
+            });
+            
+            // Verwijder spacing van eerste elementen
+            const firstElements = document.querySelectorAll('.main .block-container > div:first-child, [data-testid="stVerticalBlock"]:first-child');
+            firstElements.forEach(el => {
+                el.style.marginTop = '0';
+                el.style.paddingTop = '0';
+            });
+            
+            // Verwijder spacing van app view container
+            const appView = document.querySelector('section[data-testid="stAppViewContainer"]');
+            if (appView) {
+                appView.style.paddingTop = '0rem';
+                appView.style.marginTop = '0rem';
+            }
+        }
+        
+        // Run immediately
+        removeTopWhitespace();
+        
+        // Run after DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', removeTopWhitespace);
+        }
+        
+        // Run after a short delay (for dynamic content)
+        setTimeout(removeTopWhitespace, 100);
+        setTimeout(removeTopWhitespace, 500);
+        
+        // Monitor for changes (MutationObserver)
+        const observer = new MutationObserver(removeTopWhitespace);
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['style', 'class']
+        });
+        
+        // Also run periodically as backup
+        setInterval(removeTopWhitespace, 1000);
+    })();
+    </script>
+    """,
+    unsafe_allow_html=True)
 
 # Initialize session state
 if 'user' not in st.session_state:
@@ -1057,98 +1155,6 @@ def render_nieuws_page():
     
     st.markdown("---")
     
-    # Action buttons
-    col1, col2 = st.columns(2)
-    with col1:
-        refresh_clicked = st.button("🔄 Artikelen Vernieuwen", use_container_width=True)
-    with col2:
-        recategorize_clicked = st.button("🏷️ Alle Artikelen Her-categoriseren", use_container_width=True)
-    
-    # Handle refresh button
-    if refresh_clicked:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        feed_urls = [
-            'https://feeds.nos.nl/nosnieuwsalgemeen',
-            'https://feeds.nos.nl/nosnieuwsbinnenland',
-            'https://feeds.nos.nl/nosnieuwsbuitenland',
-        ]
-        
-        total_inserted = 0
-        total_updated = 0
-        total_skipped = 0
-        
-        for idx, feed_url in enumerate(feed_urls):
-            status_text.text(f"Feed {idx + 1}/{len(feed_urls)} ophalen...")
-            progress_bar.progress((idx) / len(feed_urls))
-            
-            try:
-                # Use LLM categorization for better accuracy
-                result = fetch_and_upsert_articles(feed_url, max_items=30, use_llm_categorization=True)
-                if result.get('success'):
-                    total_inserted += result.get('inserted', 0)
-                    total_updated += result.get('updated', 0)
-                    total_skipped += result.get('skipped', 0)
-                else:
-                    st.warning(f"Fout bij feed {feed_url}: {result.get('error', 'Onbekende fout')}")
-            except Exception as e:
-                st.error(f"Fout bij verwerken van feed: {str(e)[:200]}")
-                total_skipped += 1
-        
-        progress_bar.progress(1.0)
-        status_text.text("Klaar!")
-        
-        if total_inserted > 0 or total_updated > 0:
-            st.success(f"✅ {total_inserted} nieuwe artikelen, {total_updated} bijgewerkt")
-            if total_skipped > 0:
-                st.info(f"ℹ️ {total_skipped} artikelen overgeslagen")
-        else:
-            st.info("Geen nieuwe artikelen gevonden")
-        
-        # Small delay to show progress
-        import time
-        time.sleep(0.5)
-        st.rerun()
-    
-    # Handle recategorize button
-    if recategorize_clicked:
-        from articles_repository import recategorize_all_articles
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        status_text.text("Artikelen ophalen...")
-        progress_bar.progress(0.1)
-        
-        # Recategorize using LLM
-        status_text.text("Artikelen her-categoriseren met LLM...")
-        progress_bar.progress(0.3)
-        
-        result = recategorize_all_articles(limit=None, use_llm=True)
-        
-        progress_bar.progress(1.0)
-        
-        if result.get('success'):
-            processed = result.get('processed', 0)
-            updated = result.get('updated', 0)
-            errors = result.get('errors', 0)
-            
-            status_text.text("Klaar!")
-            
-            if updated > 0:
-                st.success(f"✅ {updated} artikelen her-categoriseerd!")
-                if errors > 0:
-                    st.warning(f"⚠️ {errors} fouten opgetreden")
-            else:
-                st.info("Geen artikelen gevonden om te her-categoriseren")
-        else:
-            st.error(f"Fout: {result.get('error', 'Onbekende fout')}")
-        
-        import time
-        time.sleep(2)
-        st.rerun()
-    
     # Get user preferences
     blacklist = []
     selected_categories = None
@@ -1196,7 +1202,7 @@ def render_nieuws_page():
     
     # Display articles
     if not articles:
-        st.info("ℹ️ Geen artikelen gevonden. Klik op '🔄 Artikelen Vernieuwen' om artikelen op te halen.")
+        st.info("ℹ️ Geen artikelen gevonden. Artikelen worden automatisch elke 15 minuten opgehaald.")
     else:
         st.subheader(f"Artikelen ({len(articles)})")
         
