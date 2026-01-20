@@ -8,27 +8,40 @@ import json
 import re
 
 
-# Define all available categories
+# Define all available categories (synchronized with homepage and user page)
 CATEGORIES = [
-    "binnenland",
-    "Buitenland - Europa",
-    "buitenland - overig",
-    "Misdaad",
-    "Huizenmarkt",
-    "Economie",
-    "bekende Nederlanders",
-    "Nationale Politiek",
-    "Lokale Politiek",
+    "Buitenland",
+    "Sport",
+    "Bekende personen",
     "Koningshuis",
-    "Technologie",
-    "Sport - Voetbal",
-    "Sport - Wielrennen",
-    "overige sport",
-    "Internationale conflicten"
+    "Politiek"
 ]
 
 # Maximum categories per article
 MAX_CATEGORIES = 20
+
+
+def _get_categorization_prompt(title: str, text: str) -> str:
+    """Get standardized categorization prompt for all LLMs."""
+    return f"""Categoriseer dit nieuwsartikel nauwkeurig. Kies ALLEEN categorieën die echt van toepassing zijn. Wees precies en vermijd foutieve categorisatie.
+
+Beschikbare categorieën met uitleg:
+- Buitenland: Alle nieuws over landen buiten Nederland (Europa, wereldwijd, internationale conflicten, buitenlandse politiek, etc.)
+- Sport: Alle sportnieuws (voetbal, wielrennen, tennis, zwemmen, atletiek, Olympische Spelen, etc.)
+- Bekende personen: Acteurs, zangers, artiesten, celebrities, bekende Nederlanders, entertainment
+- Koningshuis: Koning, koningin, prins(es), Oranje, koninklijke familie, koninklijke evenementen
+- Politiek: Alle politieke nieuws (nationaal, lokaal, kabinet, ministers, Tweede Kamer, gemeenteraad, verkiezingen, etc.)
+
+Artikel:
+Titel: {title}
+Inhoud: {text[:1500]}
+
+Analyseer het artikel zorgvuldig. Kies alleen categorieën die ECHT van toepassing zijn.
+Een artikel kan meerdere categorieën hebben. Geef alleen de categorieën terug, gescheiden door komma's. 
+Bijvoorbeeld: "Politiek, Buitenland" of "Sport" of "Bekende personen, Koningshuis"
+Als geen specifieke categorie past, geef dan geen categorieën terug (lege string).
+
+Categorieën:"""
 
 
 def categorize_article(title: str, description: str = "", content: str = "") -> Dict[str, Any]:
@@ -65,28 +78,36 @@ def _categorize_with_llm(title: str, description: str, content: str) -> Dict[str
     """Categorize using free LLM APIs. Returns dict with 'categories' and 'llm'."""
     text = f"{title} {description} {content[:1000]}".strip()
     
+    # Import secrets helper
+    try:
+        from secrets_helper import get_secret
+    except ImportError:
+        # Fallback if secrets_helper not available
+        def get_secret(key, default=None):
+            return os.getenv(key, default)
+    
     # Try different LLM APIs (Hugging Face first - reliable and free)
-    hf_api_key = os.getenv('HUGGINGFACE_API_KEY')
+    hf_api_key = get_secret('HUGGINGFACE_API_KEY')
     if hf_api_key:
         result = _categorize_with_huggingface(text, title, hf_api_key)
         if result:
             return {'categories': result, 'llm': 'Hugging Face'}
     
-    groq_api_key = os.getenv('GROQ_API_KEY')
+    groq_api_key = get_secret('GROQ_API_KEY')
     if groq_api_key:
         result = _categorize_with_groq(text, title, groq_api_key)
         if result:
             return {'categories': result, 'llm': 'Groq'}
     
-    openai_api_key = os.getenv('OPENAI_API_KEY')
-    openai_base_url = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+    openai_api_key = get_secret('OPENAI_API_KEY')
+    openai_base_url = get_secret('OPENAI_BASE_URL', 'https://api.openai.com/v1')
     if openai_api_key:
         result = _categorize_with_openai(text, title, openai_api_key, openai_base_url)
         if result:
             return {'categories': result, 'llm': 'OpenAI'}
     
     # ChatLLM - currently not working
-    chatllm_api_key = os.getenv('CHATLLM_API_KEY')
+    chatllm_api_key = get_secret('CHATLLM_API_KEY')
     if chatllm_api_key:
         result = _categorize_with_chatllm(text, title, chatllm_api_key)
         if result:
@@ -100,42 +121,7 @@ def _categorize_with_chatllm(text: str, title: str, api_key: str) -> Optional[Li
     try:
         import requests
         
-        categories_list = ", ".join(CATEGORIES)
-        
-        prompt = f"""Categoriseer dit nieuwsartikel nauwkeurig. Kies ALLEEN categorieën die echt van toepassing zijn. Wees precies en vermijd foutieve categorisatie.
-
-BELANGRIJKE REGELS:
-- "Sport - Voetbal": ALLEEN artikelen die SPECIFIEK over voetbal/soccer gaan (wedstrijden, spelers, clubs, competities). NIET voor andere sporten of algemene sportnieuws.
-- "Sport - Wielrennen": ALLEEN artikelen over wielrennen/cycling (Tour de France, Giro, wielrenners, koersen). NIET voor andere sporten.
-- "overige sport": Alleen als het over sport gaat maar NIET voetbal of wielrennen.
-- Wees voorzichtig: een artikel over "sport" in algemene zin is NIET automatisch "Sport - Voetbal".
-
-Beschikbare categorieën met uitleg:
-- binnenland: Algemeen Nederlands nieuws zonder specifieke categorie
-- Buitenland - Europa: Nieuws over Europese landen (behalve conflicten)
-- buitenland - overig: Nieuws over landen buiten Europa (behalve conflicten)
-- Misdaad: Criminaliteit, moord, diefstal, rechtspraak
-- Huizenmarkt: Woningen, huur, koop, hypotheken, vastgoed
-- Economie: Economisch nieuws, inflatie, bedrijven, werkgelegenheid
-- bekende Nederlanders: Acteurs, zangers, artiesten, celebrities
-- Nationale Politiek: Kabinet, ministers, Tweede Kamer, regering
-- Lokale Politiek: Gemeente, burgemeester, gemeenteraad
-- Koningshuis: Koning, koningin, prins(es), Oranje
-- Technologie: Tech, computers, AI, software, digitale ontwikkelingen
-- Sport - Voetbal: ALLEEN specifiek over voetbal (wedstrijden, clubs, spelers, competities)
-- Sport - Wielrennen: ALLEEN specifiek over wielrennen (koersen, wielrenners)
-- overige sport: Andere sporten (tennis, zwemmen, atletiek, etc.) maar NIET voetbal of wielrennen
-- Internationale conflicten: Oorlogen, conflicten (Rusland-Oekraïne, Gaza-Israël, Soedan, etc.)
-
-Artikel:
-Titel: {title}
-Inhoud: {text[:1500]}
-
-Analyseer het artikel zorgvuldig. Kies alleen categorieën die ECHT van toepassing zijn.
-Geef alleen de categorieën terug, gescheiden door komma's. Bijvoorbeeld: "binnenland, Nationale Politiek"
-Als geen specifieke categorie past, geef dan "binnenland" terug.
-
-Categorieën:"""
+        prompt = _get_categorization_prompt(title, text)
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -147,7 +133,7 @@ Categorieën:"""
             "messages": [
                 {
                     "role": "system",
-                    "content": "Je bent een precieze assistent die nieuwsartikelen categoriseert. Wees zeer voorzichtig met sportcategorieën: 'Sport - Voetbal' is ALLEEN voor artikelen die specifiek over voetbal gaan, NIET voor algemene sport of andere sporten. Geef alleen de categorieën terug die echt van toepassing zijn, gescheiden door komma's."
+                    "content": "Je bent een precieze assistent die nieuwsartikelen categoriseert in de volgende categorieën: Buitenland, Sport, Bekende personen, Koningshuis, Politiek. Geef alleen de categorieën terug die echt van toepassing zijn, gescheiden door komma's."
                 },
                 {
                     "role": "user",
@@ -220,48 +206,13 @@ def _categorize_with_groq(text: str, title: str, api_key: str) -> Optional[List[
         import groq
         client = groq.Groq(api_key=api_key)
         
-        categories_list = ", ".join(CATEGORIES)
-        
-        prompt = f"""Categoriseer dit nieuwsartikel nauwkeurig. Kies ALLEEN categorieën die echt van toepassing zijn. Wees precies en vermijd foutieve categorisatie.
-
-BELANGRIJKE REGELS:
-- "Sport - Voetbal": ALLEEN artikelen die SPECIFIEK over voetbal/soccer gaan (wedstrijden, spelers, clubs, competities). NIET voor andere sporten of algemene sportnieuws.
-- "Sport - Wielrennen": ALLEEN artikelen over wielrennen/cycling (Tour de France, Giro, wielrenners, koersen). NIET voor andere sporten.
-- "overige sport": Alleen als het over sport gaat maar NIET voetbal of wielrennen.
-- Wees voorzichtig: een artikel over "sport" in algemene zin is NIET automatisch "Sport - Voetbal".
-
-Beschikbare categorieën met uitleg:
-- binnenland: Algemeen Nederlands nieuws zonder specifieke categorie
-- Buitenland - Europa: Nieuws over Europese landen (behalve conflicten)
-- buitenland - overig: Nieuws over landen buiten Europa (behalve conflicten)
-- Misdaad: Criminaliteit, moord, diefstal, rechtspraak
-- Huizenmarkt: Woningen, huur, koop, hypotheken, vastgoed
-- Economie: Economisch nieuws, inflatie, bedrijven, werkgelegenheid
-- bekende Nederlanders: Acteurs, zangers, artiesten, celebrities
-- Nationale Politiek: Kabinet, ministers, Tweede Kamer, regering
-- Lokale Politiek: Gemeente, burgemeester, gemeenteraad
-- Koningshuis: Koning, koningin, prins(es), Oranje
-- Technologie: Tech, computers, AI, software, digitale ontwikkelingen
-- Sport - Voetbal: ALLEEN specifiek over voetbal (wedstrijden, clubs, spelers, competities)
-- Sport - Wielrennen: ALLEEN specifiek over wielrennen (koersen, wielrenners)
-- overige sport: Andere sporten (tennis, zwemmen, atletiek, etc.) maar NIET voetbal of wielrennen
-- Internationale conflicten: Oorlogen, conflicten (Rusland-Oekraïne, Gaza-Israël, Soedan, etc.)
-
-Artikel:
-Titel: {title}
-Inhoud: {text[:1500]}
-
-Analyseer het artikel zorgvuldig. Kies alleen categorieën die ECHT van toepassing zijn.
-Geef alleen de categorieën terug, gescheiden door komma's. Bijvoorbeeld: "binnenland, Nationale Politiek"
-Als geen specifieke categorie past, geef dan "binnenland" terug.
-
-Categorieën:"""
+        prompt = _get_categorization_prompt(title, text)
         
         chat_completion = client.chat.completions.create(
             messages=[
                 {
                     "role": "system",
-                    "content": "Je bent een precieze assistent die nieuwsartikelen categoriseert. Wees zeer voorzichtig met sportcategorieën: 'Sport - Voetbal' is ALLEEN voor artikelen die specifiek over voetbal gaan, NIET voor algemene sport of andere sporten. Geef alleen de categorieën terug die echt van toepassing zijn, gescheiden door komma's."
+                    "content": "Je bent een precieze assistent die nieuwsartikelen categoriseert in de volgende categorieën: Buitenland, Sport, Bekende personen, Koningshuis, Politiek. Geef alleen de categorieën terug die echt van toepassing zijn, gescheiden door komma's."
                 },
                 {
                     "role": "user",
@@ -288,42 +239,7 @@ def _categorize_with_openai(text: str, title: str, api_key: str, base_url: str) 
     try:
         import requests
         
-        categories_list = ", ".join(CATEGORIES)
-        
-        prompt = f"""Categoriseer dit nieuwsartikel nauwkeurig. Kies ALLEEN categorieën die echt van toepassing zijn. Wees precies en vermijd foutieve categorisatie.
-
-BELANGRIJKE REGELS:
-- "Sport - Voetbal": ALLEEN artikelen die SPECIFIEK over voetbal/soccer gaan (wedstrijden, spelers, clubs, competities). NIET voor andere sporten of algemene sportnieuws.
-- "Sport - Wielrennen": ALLEEN artikelen over wielrennen/cycling (Tour de France, Giro, wielrenners, koersen). NIET voor andere sporten.
-- "overige sport": Alleen als het over sport gaat maar NIET voetbal of wielrennen.
-- Wees voorzichtig: een artikel over "sport" in algemene zin is NIET automatisch "Sport - Voetbal".
-
-Beschikbare categorieën met uitleg:
-- binnenland: Algemeen Nederlands nieuws zonder specifieke categorie
-- Buitenland - Europa: Nieuws over Europese landen (behalve conflicten)
-- buitenland - overig: Nieuws over landen buiten Europa (behalve conflicten)
-- Misdaad: Criminaliteit, moord, diefstal, rechtspraak
-- Huizenmarkt: Woningen, huur, koop, hypotheken, vastgoed
-- Economie: Economisch nieuws, inflatie, bedrijven, werkgelegenheid
-- bekende Nederlanders: Acteurs, zangers, artiesten, celebrities
-- Nationale Politiek: Kabinet, ministers, Tweede Kamer, regering
-- Lokale Politiek: Gemeente, burgemeester, gemeenteraad
-- Koningshuis: Koning, koningin, prins(es), Oranje
-- Technologie: Tech, computers, AI, software, digitale ontwikkelingen
-- Sport - Voetbal: ALLEEN specifiek over voetbal (wedstrijden, clubs, spelers, competities)
-- Sport - Wielrennen: ALLEEN specifiek over wielrennen (koersen, wielrenners)
-- overige sport: Andere sporten (tennis, zwemmen, atletiek, etc.) maar NIET voetbal of wielrennen
-- Internationale conflicten: Oorlogen, conflicten (Rusland-Oekraïne, Gaza-Israël, Soedan, etc.)
-
-Artikel:
-Titel: {title}
-Inhoud: {text[:1500]}
-
-Analyseer het artikel zorgvuldig. Kies alleen categorieën die ECHT van toepassing zijn.
-Geef alleen de categorieën terug, gescheiden door komma's. Bijvoorbeeld: "binnenland, Nationale Politiek"
-Als geen specifieke categorie past, geef dan "binnenland" terug.
-
-Categorieën:"""
+        prompt = _get_categorization_prompt(title, text)
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -335,7 +251,7 @@ Categorieën:"""
             "messages": [
                 {
                     "role": "system",
-                    "content": "Je bent een precieze assistent die nieuwsartikelen categoriseert. Wees zeer voorzichtig met sportcategorieën: 'Sport - Voetbal' is ALLEEN voor artikelen die specifiek over voetbal gaan, NIET voor algemene sport of andere sporten. Geef alleen de categorieën terug die echt van toepassing zijn, gescheiden door komma's."
+                    "content": "Je bent een precieze assistent die nieuwsartikelen categoriseert in de volgende categorieën: Buitenland, Sport, Bekende personen, Koningshuis, Politiek. Geef alleen de categorieën terug die echt van toepassing zijn, gescheiden door komma's."
                 },
                 {
                     "role": "user",
@@ -376,8 +292,8 @@ def _categorize_with_huggingface(text: str, title: str, api_key: str) -> Optiona
         # Use zero-shot classification model
         model = "facebook/bart-large-mnli"
         
-        # Limit categories for API call (HF has limits)
-        categories_subset = CATEGORIES[:15]  # Use first 15 categories
+        # Use all 5 categories
+        categories_subset = CATEGORIES
         
         text_input = f"{title} {text[:1000]}"
         
@@ -432,7 +348,7 @@ def _categorize_with_huggingface(text: str, title: str, api_key: str) -> Optiona
         try:
             import requests
             model = "facebook/bart-large-mnli"
-            categories_subset = CATEGORIES[:15]
+            categories_subset = CATEGORIES
             text_input = f"{title} {text[:1000]}"
             
             api_url = f"https://api-inference.huggingface.co/models/{model}"
@@ -495,69 +411,27 @@ def _categorize_with_keywords(title: str, description: str, content: str) -> Lis
     text = f"{title} {description} {content}".lower()
     categories = []
     
-    # Keyword rules (order matters - more specific first)
+    # Keyword rules for the 5 new categories
     
-    # Internationale conflicten
-    if any(kw in text for kw in ['rusland', 'oekraïne', 'oekraine', 'ukraine', 'gaza', 'israël', 'israel', 'palestina', 'soedan', 'sudan', 'conflict', 'oorlog', 'aanval']):
-        categories.append("Internationale conflicten")
+    # Buitenland
+    if any(kw in text for kw in ['buitenland', 'europa', 'eu', 'europese unie', 'brussel', 'frankrijk', 'duitsland', 'spanje', 'italië', 'belgië', 'polen', 'amerika', 'verenigde staten', 'vs', 'china', 'japan', 'australië', 'canada', 'rusland', 'oekraïne', 'oekraine', 'ukraine', 'gaza', 'israël', 'israel', 'palestina', 'soedan', 'sudan', 'conflict', 'oorlog', 'aanval', 'internationaal']):
+        categories.append("Buitenland")
     
-    # Buitenland - Europa
-    if any(kw in text for kw in ['europa', 'eu', 'europese unie', 'brussel', 'frankrijk', 'duitsland', 'spanje', 'italië', 'belgië', 'polen', 'eurozone']):
-        categories.append("Buitenland - Europa")
+    # Sport
+    if any(kw in text for kw in ['sport', 'voetbal', 'ajax', 'psv', 'feyenoord', 'eredivisie', 'champions league', 'ek', 'wk voetbal', 'voetballer', 'wielrennen', 'tour de france', 'giro', 'vuelta', 'wielrenner', 'koers', 'fietsen', 'olympische', 'atletiek', 'zwemmen', 'tennis', 'hockey', 'basketbal']):
+        categories.append("Sport")
     
-    # Buitenland - overig
-    if any(kw in text for kw in ['amerika', 'verenigde staten', 'vs', 'china', 'japan', 'australië', 'canada', 'buitenland']):
-        if "Buitenland - Europa" not in categories:
-            categories.append("buitenland - overig")
-    
-    # Sport - Voetbal
-    if any(kw in text for kw in ['voetbal', 'ajax', 'psv', 'feyenoord', 'eredivisie', 'champions league', 'ek', 'wk voetbal', 'voetballer']):
-        categories.append("Sport - Voetbal")
-    
-    # Sport - Wielrennen
-    if any(kw in text for kw in ['wielrennen', 'tour de france', 'giro', 'vuelta', 'wielrenner', 'koers', 'fietsen']):
-        categories.append("Sport - Wielrennen")
-    
-    # overige sport
-    if any(kw in text for kw in ['sport', 'olympische', 'atletiek', 'zwemmen', 'tennis', 'hockey', 'basketbal']):
-        if "Sport - Voetbal" not in categories and "Sport - Wielrennen" not in categories:
-            categories.append("overige sport")
+    # Bekende personen
+    if any(kw in text for kw in ['acteur', 'actrice', 'zanger', 'zangeres', 'artiest', 'presentator', 'bekende nederlander', 'celebrity', 'ster', 'bekende']):
+        categories.append("Bekende personen")
     
     # Koningshuis
     if any(kw in text for kw in ['koning', 'koningin', 'prins', 'prinses', 'beatrix', 'willem-alexander', 'maxima', 'amalia', 'koningshuis', 'oranje']):
         categories.append("Koningshuis")
     
-    # bekende Nederlanders
-    if any(kw in text for kw in ['acteur', 'actrice', 'zanger', 'zangeres', 'artiest', 'presentator', 'bekende nederlander']):
-        categories.append("bekende Nederlanders")
-    
-    # Nationale Politiek
-    if any(kw in text for kw in ['kabinet', 'minister', 'premier', 'tweede kamer', 'eerste kamer', 'regering', 'oppositie', 'coalitie', 'den haag', 'binnenhof']):
-        categories.append("Nationale Politiek")
-    
-    # Lokale Politiek
-    if any(kw in text for kw in ['gemeente', 'burgemeester', 'wethouder', 'gemeenteraad', 'lokaal', 'gemeentelijk']):
-        categories.append("Lokale Politiek")
-    
-    # Misdaad
-    if any(kw in text for kw in ['moord', 'diefstal', 'inbraak', 'geweld', 'crimineel', 'politie', 'rechter', 'rechtbank', 'cel', 'gevangenis']):
-        categories.append("Misdaad")
-    
-    # Huizenmarkt
-    if any(kw in text for kw in ['huis', 'woning', 'huur', 'koop', 'hypotheek', 'vastgoed', 'huizenmarkt', 'woningmarkt', 'huurprijs', 'koopprijs']):
-        categories.append("Huizenmarkt")
-    
-    # Economie
-    if any(kw in text for kw in ['economie', 'economisch', 'inflatie', 'prijzen', 'geld', 'bank', 'beurs', 'bedrijf', 'werkgelegenheid', 'werkloosheid']):
-        categories.append("Economie")
-    
-    # Technologie
-    if any(kw in text for kw in ['technologie', 'tech', 'computer', 'internet', 'app', 'software', 'ai', 'artificiële intelligentie', 'robot', 'digitale']):
-        categories.append("Technologie")
-    
-    # binnenland (default if nothing else matches)
-    if not categories:
-        categories.append("binnenland")
+    # Politiek
+    if any(kw in text for kw in ['politiek', 'kabinet', 'minister', 'premier', 'tweede kamer', 'eerste kamer', 'regering', 'oppositie', 'coalitie', 'den haag', 'binnenhof', 'gemeente', 'burgemeester', 'wethouder', 'gemeenteraad', 'lokaal', 'gemeentelijk', 'verkiezing', 'partij']):
+        categories.append("Politiek")
     
     return categories
 
@@ -565,4 +439,3 @@ def _categorize_with_keywords(title: str, description: str, content: str) -> Lis
 def get_all_categories() -> List[str]:
     """Get list of all available categories."""
     return CATEGORIES.copy()
-

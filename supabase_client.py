@@ -20,24 +20,49 @@ class SupabaseClient:
         if Client is None:
             raise ImportError("supabase package not installed. Install with: pip install supabase")
         
-        supabase_url = os.getenv('SUPABASE_URL')
-        supabase_key = os.getenv('SUPABASE_ANON_KEY')
+        # Get secrets from Streamlit secrets or environment variables
+        try:
+            from secrets_helper import get_secret
+            supabase_url = get_secret('SUPABASE_URL')
+            supabase_key = get_secret('SUPABASE_ANON_KEY')
+        except:
+            # Fallback to environment variables if secrets_helper not available
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_ANON_KEY')
         
         if not supabase_url or not supabase_key:
             raise ValueError(
                 "SUPABASE_URL and SUPABASE_ANON_KEY must be set in environment variables"
             )
         
-        options = ClientOptions(
-            auto_refresh_token=True,
-            persist_session=True
-        ) if ClientOptions else None
-        
-        self.client: Client = create_client(
-            supabase_url,
-            supabase_key,
-            options=options
-        )
+        # Create client with minimal options to avoid compatibility issues
+        try:
+            if ClientOptions:
+                # Try with options first
+                try:
+                    options = ClientOptions(
+                        auto_refresh_token=True,
+                        persist_session=True
+                    )
+                    self.client: Client = create_client(
+                        supabase_url,
+                        supabase_key,
+                        options=options
+                    )
+                except (AttributeError, TypeError):
+                    # Fallback: create without options if ClientOptions has issues
+                    self.client: Client = create_client(
+                        supabase_url,
+                        supabase_key
+                    )
+            else:
+                # No ClientOptions available, create without options
+                self.client: Client = create_client(
+                    supabase_url,
+                    supabase_key
+                )
+        except Exception as e:
+            raise ValueError(f"Failed to create Supabase client: {e}")
     
     # Authentication methods
     def sign_up(self, email: str, password: str) -> Dict[str, Any]:
@@ -111,22 +136,36 @@ class SupabaseClient:
         try:
             response = self.client.table('user_preferences').select('*').eq('user_id', user_id).execute()
             if response.data:
-                return response.data[0]
+                prefs = response.data[0]
+                # If selected_categories is missing, None, or empty list, set to all categories
+                selected_cats = prefs.get('selected_categories')
+                if 'selected_categories' not in prefs or selected_cats is None or (isinstance(selected_cats, list) and len(selected_cats) == 0):
+                    from categorization_engine import get_all_categories
+                    prefs['selected_categories'] = get_all_categories()
+                    # Update in database
+                    self.update_user_preferences(user_id, selected_categories=prefs['selected_categories'])
+                return prefs
             else:
                 # Create default preferences
                 return self.create_default_preferences(user_id)
         except Exception as e:
             # If table doesn't exist, return defaults
+            from categorization_engine import get_all_categories
             return {
                 "user_id": user_id,
-                "blacklist_keywords": ["Trump", "Rusland", "Soedan", "aanslag"]
+                "blacklist_keywords": ["Trump", "Rusland", "Soedan", "aanslag"],
+                "selected_categories": get_all_categories()
             }
     
     def create_default_preferences(self, user_id: str) -> Dict[str, Any]:
         """Create default preferences for a new user."""
+        from categorization_engine import get_all_categories
+        all_categories = get_all_categories()
+        
         default_prefs = {
             "user_id": user_id,
-            "blacklist_keywords": ["Trump", "Rusland", "Soedan", "aanslag"]
+            "blacklist_keywords": ["Trump", "Rusland", "Soedan", "aanslag"],
+            "selected_categories": all_categories  # All categories selected by default
         }
         try:
             response = self.client.table('user_preferences').insert(default_prefs).execute()
@@ -297,6 +336,21 @@ class SupabaseClient:
             print(f"Error updating ELI5: {e}")
             return False
     
+    def update_article_categories(self, article_id: str, categories: List[str], categorization_llm: str) -> bool:
+        """Update article with new categories and LLM used."""
+        try:
+            update_data = {
+                'categories': categories,
+                'categorization_llm': categorization_llm,
+                'updated_at': 'now()'
+            }
+            
+            self.client.table('articles').update(update_data).eq('id', article_id).execute()
+            return True
+        except Exception as e:
+            print(f"Error updating categories: {e}")
+            return False
+    
     def get_articles_without_eli5(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Get articles that don't have ELI5 summaries yet."""
         try:
@@ -304,6 +358,193 @@ class SupabaseClient:
             return response.data if response.data else []
         except Exception:
             return []
+    
+    def get_user_count(self) -> int:
+        """Get total count of registered users from Supabase Auth."""
+        try:
+            # Method 1: Try to call database function if it exists
+            try:
+                response = self.client.rpc('get_user_count').execute()
+                if response.data is not None:
+                    # RPC functions return data in different formats
+                    if isinstance(response.data, (int, float)):
+                        return int(response.data)
+                    elif isinstance(response.data, list) and len(response.data) > 0:
+                        # Function returns a list with one integer
+                        value = response.data[0]
+                        if isinstance(value, dict):
+                            # Sometimes wrapped in dict
+                            for key in ['get_user_count', 'count', 'result', 'value']:
+                                if key in value:
+                                    return int(value[key])
+                        else:
+                            return int(value)
+                    elif isinstance(response.data, dict):
+                        # Try common keys
+                        for key in ['count', 'result', 'value', 'user_count', 'get_user_count']:
+                            if key in response.data:
+                                return int(response.data[key])
+                    # If it's a single value, try to convert
+                    try:
+                        return int(response.data)
+                    except:
+                        pass
+            except Exception as e:
+                print(f"RPC function not available (this is OK if function not created yet): {e}")
+            
+            # Method 2: Count distinct users from user_preferences table
+            # This works because get_user_preferences creates default preferences for new users
+            try:
+                # Use count='exact' to get the count without fetching all data
+                response = self.client.table('user_preferences').select('user_id', count='exact').execute()
+                
+                # Check if count attribute exists
+                if hasattr(response, 'count') and response.count is not None:
+                    return int(response.count)
+                
+                # Fallback: fetch all and count unique user_ids
+                # Note: This might be slow with many users, but works reliably
+                all_prefs = self.client.table('user_preferences').select('user_id').execute()
+                if all_prefs.data:
+                    unique_users = set()
+                    for pref in all_prefs.data:
+                        user_id = pref.get('user_id')
+                        if user_id:
+                            unique_users.add(str(user_id))  # Convert to string for consistency
+                    return len(unique_users)
+                
+                return 0
+            except Exception as e:
+                print(f"Error counting users from user_preferences: {e}")
+                # Try alternative: count all rows
+                try:
+                    response = self.client.table('user_preferences').select('id', count='exact').execute()
+                    if hasattr(response, 'count') and response.count is not None:
+                        return int(response.count)
+                except Exception:
+                    pass
+            
+            # If all methods fail, return -1 to indicate unavailable
+            return -1
+        except Exception as e:
+            print(f"Error in get_user_count: {e}")
+            return -1
+    
+    def delete_old_articles(self, days_old: int = 7) -> Dict[str, Any]:
+        """
+        Delete articles older than specified number of days.
+        
+        Args:
+            days_old: Number of days old (default: 7 for 1 week)
+        
+        Returns:
+            Dict with count of deleted articles and any errors
+        """
+        try:
+            from datetime import datetime, timedelta
+            import pytz
+            
+            # Calculate cutoff date (articles older than this will be deleted)
+            cutoff_date = datetime.now(pytz.UTC) - timedelta(days=days_old)
+            cutoff_date_str = cutoff_date.isoformat()
+            
+            print(f"[Delete Old Articles] Deleting articles older than {days_old} days (before {cutoff_date_str})")
+            
+            # First, get count of articles to be deleted (for logging)
+            try:
+                count_response = self.client.table('articles').select('id', count='exact').lt('published_at', cutoff_date_str).execute()
+                count = count_response.count if hasattr(count_response, 'count') and count_response.count is not None else 0
+            except Exception as e:
+                print(f"[Delete Old Articles] Error counting articles: {e}")
+                count = 0
+            
+            if count == 0:
+                print(f"[Delete Old Articles] No articles older than {days_old} days found")
+                return {
+                    'success': True,
+                    'deleted_count': 0,
+                    'error': None
+                }
+            
+            # Delete articles older than cutoff date
+            # Use published_at if available, otherwise use created_at
+            try:
+                # Try deleting by published_at first
+                response = self.client.table('articles').delete().lt('published_at', cutoff_date_str).execute()
+                deleted_count = len(response.data) if response.data else 0
+                
+                # Also delete articles without published_at that are old based on created_at
+                response2 = self.client.table('articles').delete().is_('published_at', 'null').lt('created_at', cutoff_date_str).execute()
+                deleted_count += len(response2.data) if response2.data else 0
+                
+                print(f"[Delete Old Articles] Successfully deleted {deleted_count} articles")
+                
+                return {
+                    'success': True,
+                    'deleted_count': deleted_count,
+                    'error': None
+                }
+            except Exception as e:
+                error_msg = f"Error deleting articles: {str(e)}"
+                print(f"[Delete Old Articles] {error_msg}")
+                return {
+                    'success': False,
+                    'deleted_count': 0,
+                    'error': error_msg
+                }
+        except Exception as e:
+            error_msg = f"Exception in delete_old_articles: {str(e)}"
+            print(f"[Delete Old Articles] {error_msg}")
+            return {
+                'success': False,
+                'deleted_count': 0,
+                'error': error_msg
+            }
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get statistics about articles and ELI5 summaries."""
+        try:
+            # Get total article count
+            articles_response = self.client.table('articles').select('id', count='exact').execute()
+            total_articles = articles_response.count if hasattr(articles_response, 'count') else len(articles_response.data) if articles_response.data else 0
+            
+            # Get articles with ELI5
+            eli5_response = self.client.table('articles').select('id', count='exact').not_.is_('eli5_summary_nl', 'null').execute()
+            articles_with_eli5 = eli5_response.count if hasattr(eli5_response, 'count') else len(eli5_response.data) if eli5_response.data else 0
+            
+            # Get all articles with categories
+            all_articles_response = self.client.table('articles').select('categories, categorization_llm').execute()
+            articles = all_articles_response.data if all_articles_response.data else []
+            
+            # Count categories
+            category_counts = {}
+            for article in articles:
+                categories = article.get('categories', [])
+                if isinstance(categories, str):
+                    try:
+                        import json
+                        categories = json.loads(categories)
+                    except:
+                        categories = []
+                if isinstance(categories, list):
+                    for cat in categories:
+                        if cat:
+                            category_counts[cat] = category_counts.get(cat, 0) + 1
+            
+            return {
+                'total_articles': total_articles,
+                'articles_with_eli5': articles_with_eli5,
+                'articles_without_eli5': total_articles - articles_with_eli5,
+                'category_counts': category_counts
+            }
+        except Exception as e:
+            print(f"Error getting statistics: {e}")
+            return {
+                'total_articles': 0,
+                'articles_with_eli5': 0,
+                'articles_without_eli5': 0,
+                'category_counts': {}
+            }
 
 
 # Global instance (will be initialized when needed)
@@ -316,8 +557,15 @@ def get_supabase_client():
     global _supabase_client, _local_storage
     
     # Check if Supabase credentials are available
-    supabase_url = os.getenv('SUPABASE_URL')
-    supabase_key = os.getenv('SUPABASE_ANON_KEY')
+    # Try Streamlit secrets first, then environment variables
+    try:
+        from secrets_helper import get_secret
+        supabase_url = get_secret('SUPABASE_URL')
+        supabase_key = get_secret('SUPABASE_ANON_KEY')
+    except:
+        # Fallback to environment variables if secrets_helper not available
+        supabase_url = os.getenv('SUPABASE_URL')
+        supabase_key = os.getenv('SUPABASE_ANON_KEY')
     
     if supabase_url and supabase_key:
         # Use Supabase

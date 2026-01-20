@@ -36,30 +36,38 @@ def generate_eli5_summary_nl_with_llm(article_text: str, title: str = "") -> Opt
     """
     # Try different free LLM APIs in order of preference
     
+    # Import secrets helper
+    try:
+        from secrets_helper import get_secret
+    except ImportError:
+        # Fallback if secrets_helper not available
+        def get_secret(key, default=None):
+            return os.getenv(key, default)
+    
     # Option 1: Hugging Face Inference API (free tier, reliable)
-    hf_api_key = os.getenv('HUGGINGFACE_API_KEY')
+    hf_api_key = get_secret('HUGGINGFACE_API_KEY')
     if hf_api_key:
         summary = _generate_with_huggingface(article_text, title, hf_api_key)
         if summary:
             return {'summary': summary, 'llm': 'HuggingFace'}
     
     # Option 2: Groq API (free tier with API key, fast)
-    groq_api_key = os.getenv('GROQ_API_KEY')
+    groq_api_key = get_secret('GROQ_API_KEY')
     if groq_api_key:
         summary = _generate_with_groq(article_text, title, groq_api_key)
         if summary:
             return {'summary': summary, 'llm': 'Groq'}
     
     # Option 3: OpenAI-compatible API (e.g., Together AI, OpenRouter free models)
-    openai_api_key = os.getenv('OPENAI_API_KEY')
-    openai_base_url = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+    openai_api_key = get_secret('OPENAI_API_KEY')
+    openai_base_url = get_secret('OPENAI_BASE_URL', 'https://api.openai.com/v1')
     if openai_api_key:
         summary = _generate_with_openai_compatible(article_text, title, openai_api_key, openai_base_url)
         if summary:
             return {'summary': summary, 'llm': 'OpenAI'}
     
     # Option 4: ChatLLM API (Aitomatic) - currently not working
-    chatllm_api_key = os.getenv('CHATLLM_API_KEY')
+    chatllm_api_key = get_secret('CHATLLM_API_KEY')
     if chatllm_api_key:
         summary = _generate_with_chatllm(article_text, title, chatllm_api_key)
         if summary:
@@ -254,12 +262,14 @@ Samenvatting (heel simpel, 2-3 zinnen):"""
     return None
 
 
-def _generate_with_groq(text: str, title: str, api_key: str) -> Optional[str]:
+def _generate_with_groq(text: str, title: str, api_key: str, timeout: int = 30) -> Optional[str]:
     """Generate summary using Groq API (fast and free tier available)."""
     try:
         import groq
+        from functools import wraps
+        import threading
         
-        client = groq.Groq(api_key=api_key)
+        client = groq.Groq(api_key=api_key, timeout=timeout)
         
         prompt = f"""Leg dit nieuwsartikel uit alsof ik 5 jaar ben. Gebruik heel eenvoudige Nederlandse woorden die een 5-jarige begrijpt. Gebruik korte zinnen (2-3 zinnen).
 
@@ -271,24 +281,34 @@ Inhoud: {text[:2000]}
 
 Samenvatting:"""
         
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Je bent een vriendelijke assistent die nieuwsartikelen uitlegt aan kinderen van 5 jaar oud. Gebruik altijd heel eenvoudige Nederlandse woorden en korte zinnen. Leg namen en bedrijfsnamen met een hoofdletter uit in simpele woorden (behalve bekende landen zoals Nederland, Frankrijk)."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            model="llama-3.1-8b-instant",  # Free fast model
-            temperature=0.7,
-            max_tokens=150
-        )
-        
-        summary = chat_completion.choices[0].message.content.strip()
-        return summary
+        try:
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Je bent een vriendelijke assistent die nieuwsartikelen uitlegt aan kinderen van 5 jaar oud. Gebruik altijd heel eenvoudige Nederlandse woorden en korte zinnen. Leg namen en bedrijfsnamen met een hoofdletter uit in simpele woorden (behalve bekende landen zoals Nederland, Frankrijk)."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                model="llama-3.1-8b-instant",  # Free fast model
+                temperature=0.7,
+                max_tokens=150,
+                timeout=timeout
+            )
+            
+            summary = chat_completion.choices[0].message.content.strip()
+            return summary
+        except Exception as api_error:
+            # Check if it's a timeout
+            error_str = str(api_error).lower()
+            if "timeout" in error_str or "timed out" in error_str:
+                print(f"Groq API timeout after {timeout}s")
+            else:
+                print(f"Groq API error: {api_error}")
+            return None
     except ImportError:
         print("Groq library not installed. Install with: pip install groq")
     except Exception as e:
