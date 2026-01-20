@@ -16,6 +16,7 @@ def get_secret(key: str, default: str = None) -> str:
         The secret value or default
     """
     # Try Streamlit secrets first (for production on Streamlit Cloud)
+    # Import streamlit inside the function to avoid import errors during module load
     try:
         import streamlit as st
         # Check if we're in a Streamlit context
@@ -46,8 +47,12 @@ def get_secret(key: str, default: str = None) -> str:
                         return value
             except:
                 pass
-    except Exception as e:
+    except (ImportError, RuntimeError, AttributeError):
         # If streamlit is not available or not initialized, continue to env vars
+        # This is expected during module import time
+        pass
+    except Exception:
+        # Any other exception, silently continue to env vars
         pass
     
     # Fall back to environment variable (for local development)

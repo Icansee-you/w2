@@ -2,9 +2,14 @@
 NLP utilities for generating ELI5 summaries using free LLM APIs.
 """
 import os
-from typing import Optional, Dict, Any
-import requests
+import re
 import json
+from typing import Optional, Dict, Any
+
+try:
+    import requests
+except ImportError:
+    requests = None  # Will be handled gracefully in functions that use it
 
 
 def generate_eli5_summary_nl(article_text: str, title: str = "") -> Optional[str]:
@@ -82,6 +87,8 @@ def generate_eli5_summary_nl_with_llm(article_text: str, title: str = "") -> Opt
 
 def _generate_with_chatllm(text: str, title: str, api_key: str) -> Optional[str]:
     """Generate summary using ChatLLM API with improved error handling."""
+    if requests is None:
+        return None
     try:
         prompt = f"""Leg dit nieuwsartikel uit alsof ik 5 jaar ben. Gebruik heel eenvoudige Nederlandse woorden die een 5-jarige begrijpt. Gebruik korte zinnen (2-3 zinnen).
 
@@ -237,6 +244,8 @@ Samenvatting (heel simpel, 2-3 zinnen):"""
         
     except ImportError:
         # Fallback to direct API call if library not available
+        if requests is None:
+            return None
         try:
             headers = {"Authorization": f"Bearer {api_key}"}
             prompt = f"Leg dit uit alsof ik 5 ben: {title}. {text[:1000]}"
@@ -319,6 +328,8 @@ Samenvatting:"""
 
 def _generate_with_openai_compatible(text: str, title: str, api_key: str, base_url: str) -> Optional[str]:
     """Generate summary using OpenAI-compatible API."""
+    if requests is None:
+        return None
     try:
         prompt = f"""Leg dit nieuwsartikel uit alsof ik 5 jaar ben. Gebruik heel eenvoudige Nederlandse woorden die een 5-jarige begrijpt. Gebruik korte zinnen (2-3 zinnen).
 
@@ -373,7 +384,6 @@ def _simple_extract_summary(text: str) -> Optional[str]:
         return None
     
     # Split by sentence endings
-    import re
     sentences = re.split(r'[.!?]+\s+', text)
     sentences = [s.strip() for s in sentences if s.strip()]
     
