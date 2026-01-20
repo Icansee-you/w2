@@ -100,9 +100,12 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = False
     content = entry.get('content', [{}])[0].get('value', '')[:10000] if entry.get('content') else None
     
     # Categorize article - use fast keyword matching by default, LLM only if requested
+    # NOTE: This categorization will only be used for NEW articles.
+    # Existing articles will preserve their existing LLM categorization (see fetch_and_upsert_articles)
     if use_llm_categorization:
         try:
             # Use LLM categorization (slower, but more accurate)
+            # Only do this for NEW articles - existing articles will preserve their categorization
             categorization_result = categorize_article(title, description, content or '')
             if isinstance(categorization_result, dict):
                 categories = categorization_result.get('categories', [])
@@ -198,26 +201,47 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                         # Preserve ELI5 if exists
                         if existing.get('eli5_summary_nl'):
                             article_data['eli5_summary_nl'] = existing['eli5_summary_nl']
+                            article_data['eli5_llm'] = existing.get('eli5_llm')
+                        
+                        # Preserve LLM categorization if it exists (don't re-categorize with LLM)
+                        if existing.get('categorization_llm') and existing.get('categorization_llm') != 'Keywords':
+                            # Article already has LLM categorization, keep it
+                            article_data['categories'] = existing.get('categories', [])
+                            article_data['categorization_llm'] = existing.get('categorization_llm')
+                            print(f"[RSS Checker] Preserving existing LLM categorization for article {article_data.get('stable_id')[:8]}...")
+                        
                         storage.upsert_article(article_data)
                         updated_count += 1
                     else:
+                        # Insert new article (will be categorized with LLM if use_llm_categorization=True)
                         storage.upsert_article(article_data)
                         inserted_count += 1
                 elif isinstance(storage, SupabaseClient):
                     # Supabase: check if exists by stable_id
                     try:
-                        # Check if article exists by stable_id
-                        response = storage.client.table('articles').select('id, eli5_summary_nl').eq('stable_id', article_data['stable_id']).execute()
+                        # Check if article exists by stable_id - also get categories and categorization_llm
+                        response = storage.client.table('articles').select(
+                            'id, eli5_summary_nl, categories, categorization_llm, eli5_llm'
+                        ).eq('stable_id', article_data['stable_id']).execute()
                         
                         if response.data and len(response.data) > 0:
-                            # Update existing article (but preserve ELI5 if it exists)
-                            if response.data[0].get('eli5_summary_nl'):
-                                article_data['eli5_summary_nl'] = response.data[0]['eli5_summary_nl']
+                            existing = response.data[0]
+                            # Preserve ELI5 if it exists
+                            if existing.get('eli5_summary_nl'):
+                                article_data['eli5_summary_nl'] = existing['eli5_summary_nl']
+                                article_data['eli5_llm'] = existing.get('eli5_llm')
+                            
+                            # Preserve LLM categorization if it exists (don't re-categorize with LLM)
+                            if existing.get('categorization_llm') and existing.get('categorization_llm') != 'Keywords':
+                                # Article already has LLM categorization, keep it
+                                article_data['categories'] = existing.get('categories', [])
+                                article_data['categorization_llm'] = existing.get('categorization_llm')
+                                print(f"[RSS Checker] Preserving existing LLM categorization for article {article_data.get('stable_id')[:8]}...")
                             
                             storage.upsert_article(article_data)
                             updated_count += 1
                         else:
-                            # Insert new article
+                            # Insert new article (will be categorized with LLM if use_llm_categorization=True)
                             storage.upsert_article(article_data)
                             inserted_count += 1
                     except Exception as e:

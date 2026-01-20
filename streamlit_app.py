@@ -411,22 +411,22 @@ if 'current_page' not in st.session_state:
 
 
 def init_supabase():
-    """Initialize Supabase client or local storage."""
+    """Initialize Supabase client. Always uses Supabase."""
     try:
         if st.session_state.supabase is None:
             st.session_state.supabase = get_supabase_client()
-            
-            # Check if using local storage
-            try:
-                from local_storage import LocalStorage
-                if isinstance(st.session_state.supabase, LocalStorage):
-                    st.info("🧪 **Testmodus**: Gebruikt lokale opslag (geen Supabase vereist)")
-            except ImportError:
-                pass
         
         return st.session_state.supabase
+    except ValueError as e:
+        # Missing credentials
+        st.error(f"❌ **Supabase configuratie ontbreekt**: {str(e)}")
+        st.info("💡 **Voor lokale ontwikkeling**: Maak een `.env` bestand met `SUPABASE_URL` en `SUPABASE_ANON_KEY`")
+        st.info("💡 **Voor productie**: Voeg secrets toe in Streamlit Cloud (Settings → Secrets)")
+        return None
     except Exception as e:
-        st.error(f"Error initializing storage: {str(e)}")
+        # Other errors (connection issues, etc.)
+        st.error(f"❌ **Supabase connectie mislukt**: {str(e)}")
+        st.info("💡 Controleer of je Supabase credentials correct zijn en of je internetverbinding werkt.")
         return None
 
 
@@ -1429,8 +1429,7 @@ def render_statistics_page():
     st.title("📊 Statistics")
     st.markdown("---")
     
-    # Check if using Supabase or local storage
-    from local_storage import LocalStorage
+    # Always using Supabase now
     from supabase_client import SupabaseClient
     import pandas as pd
     
@@ -1530,13 +1529,13 @@ def render_statistics_page():
             import traceback
             st.code(traceback.format_exc())
     else:
-        # Local storage mode
-        st.info("🧪 **Testmodus**: Statistieken zijn beperkt in lokale opslag modus.")
-        st.caption("Voor volledige statistieken, configureer Supabase connectie.")
+        # Supabase not initialized
+        st.error("❌ **Fout**: Supabase is niet geïnitialiseerd. Statistieken zijn niet beschikbaar.")
+        st.info("💡 Controleer of SUPABASE_URL en SUPABASE_ANON_KEY correct zijn ingesteld.")
         
+        # Try to get basic stats anyway (in case supabase is None but we want to show something)
         try:
-            # Try to get basic stats from local storage
-            articles = supabase.get_articles(limit=1000)
+            articles = supabase.get_articles(limit=1000) if supabase else []
             total_articles = len(articles)
             
             articles_with_eli5 = sum(1 for a in articles if a.get('eli5_summary_nl'))
@@ -1593,6 +1592,9 @@ def render_gebruiker_page():
                 if result.get('success'):
                     st.session_state.user = result.get('user')
                     st.session_state.preferences = None
+                    # Clear explicit logout flag when user successfully logs in manually
+                    if 'user_explicitly_logged_out' in st.session_state:
+                        del st.session_state.user_explicitly_logged_out
                     st.success("Ingelogd!")
                     st.rerun()
                 else:
@@ -1611,6 +1613,9 @@ def render_gebruiker_page():
                 else:
                     result = supabase.sign_up(new_email, new_password)
                     if result.get('success'):
+                        # Clear explicit logout flag when user successfully registers
+                        if 'user_explicitly_logged_out' in st.session_state:
+                            del st.session_state.user_explicitly_logged_out
                         st.success("Account aangemaakt! Je kunt nu inloggen.")
                     else:
                         st.error(f"Registratie mislukt: {result.get('error', 'Onbekende fout')}")
@@ -1627,7 +1632,9 @@ def render_gebruiker_page():
             supabase.sign_out()
             st.session_state.user = None
             st.session_state.preferences = None
-            # Reset auto-login flag so it will auto-login again on next page load
+            # Set flag to prevent auto-login after explicit logout
+            st.session_state.user_explicitly_logged_out = True
+            # Reset auto-login flag
             if 'auto_login_attempted' in st.session_state:
                 del st.session_state.auto_login_attempted
             st.rerun()
@@ -1747,36 +1754,41 @@ def main():
         user = supabase.get_current_user()
         if user:
             st.session_state.user = user
+            # Clear explicit logout flag if user successfully logged in manually
+            if 'user_explicitly_logged_out' in st.session_state:
+                del st.session_state.user_explicitly_logged_out
         else:
             # Auto-login with test@hotmail.com if no user is logged in
-            # Only attempt once per session to avoid infinite loops
-            if 'auto_login_attempted' not in st.session_state:
-                st.session_state.auto_login_attempted = True
-                test_email = "test@hotmail.com"
-                test_password = get_secret('TEST_USER_PASSWORD', 'test123')  # Default password, can be overridden via env var
-                
-                result = supabase.sign_in(test_email, test_password)
-                if result.get('success'):
-                    user_obj = result.get('user')
-                    st.session_state.user = user_obj
-                    # Ensure email is accessible - store it explicitly if needed
-                    # The user object from Supabase should have email, but we'll handle it in get_user_email()
-                    # Load preferences immediately
-                    user_id = get_user_id(user_obj)
-                    if user_id:
-                        prefs = supabase.get_user_preferences(user_id)
-                        st.session_state.preferences = prefs
-                        # Ensure test@hotmail.com has all categories selected
-                        from categorization_engine import get_all_categories
-                        all_categories = get_all_categories()
-                        if prefs.get('selected_categories') != all_categories:
-                            # Update to have all categories selected
-                            supabase.update_user_preferences(user_id, selected_categories=all_categories)
-                            # Reload preferences
-                            st.session_state.preferences = supabase.get_user_preferences(user_id)
-                    # Rerun to show the logged-in state
-                    st.rerun()
-                # If login fails, silently continue - user can manually login
+            # BUT: Don't auto-login if user explicitly logged out
+            if not st.session_state.get('user_explicitly_logged_out', False):
+                # Only attempt once per session to avoid infinite loops
+                if 'auto_login_attempted' not in st.session_state:
+                    st.session_state.auto_login_attempted = True
+                    test_email = "test@hotmail.com"
+                    test_password = get_secret('TEST_USER_PASSWORD', 'test123')  # Default password, can be overridden via env var
+                    
+                    result = supabase.sign_in(test_email, test_password)
+                    if result.get('success'):
+                        user_obj = result.get('user')
+                        st.session_state.user = user_obj
+                        # Ensure email is accessible - store it explicitly if needed
+                        # The user object from Supabase should have email, but we'll handle it in get_user_email()
+                        # Load preferences immediately
+                        user_id = get_user_id(user_obj)
+                        if user_id:
+                            prefs = supabase.get_user_preferences(user_id)
+                            st.session_state.preferences = prefs
+                            # Ensure test@hotmail.com has all categories selected
+                            from categorization_engine import get_all_categories
+                            all_categories = get_all_categories()
+                            if prefs.get('selected_categories') != all_categories:
+                                # Update to have all categories selected
+                                supabase.update_user_preferences(user_id, selected_categories=all_categories)
+                                # Reload preferences
+                                st.session_state.preferences = supabase.get_user_preferences(user_id)
+                        # Rerun to show the logged-in state
+                        st.rerun()
+                    # If login fails, silently continue - user can manually login
     
     # Render horizontal menu
     render_horizontal_menu()

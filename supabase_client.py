@@ -553,8 +553,8 @@ _local_storage = None
 
 
 def get_supabase_client():
-    """Get or create Supabase client instance, or fall back to local storage."""
-    global _supabase_client, _local_storage
+    """Get or create Supabase client instance. Always uses Supabase, no fallback to local storage."""
+    global _supabase_client
     
     # Check if Supabase credentials are available
     # Try Streamlit secrets first, then environment variables
@@ -562,24 +562,31 @@ def get_supabase_client():
         from secrets_helper import get_secret
         supabase_url = get_secret('SUPABASE_URL')
         supabase_key = get_secret('SUPABASE_ANON_KEY')
-    except:
+    except Exception as e:
+        print(f"DEBUG: Error loading secrets: {e}")
         # Fallback to environment variables if secrets_helper not available
         supabase_url = os.getenv('SUPABASE_URL')
         supabase_key = os.getenv('SUPABASE_ANON_KEY')
     
-    if supabase_url and supabase_key:
-        # Use Supabase
-        if _supabase_client is None:
-            try:
-                _supabase_client = SupabaseClient()
-            except Exception as e:
-                print(f"Warning: Could not initialize Supabase: {e}")
-                print("Falling back to local storage for testing...")
-                return get_local_storage()
-        return _supabase_client
-    else:
-        # Use local storage for testing
-        return get_local_storage()
+    if not supabase_url or not supabase_key:
+        raise ValueError(
+            "SUPABASE_URL and SUPABASE_ANON_KEY must be set. "
+            "For local development, add them to your .env file. "
+            "For production, add them to Streamlit Secrets."
+        )
+    
+    # Always use Supabase
+    if _supabase_client is None:
+        try:
+            _supabase_client = SupabaseClient()
+            print("DEBUG: Supabase client initialized successfully")
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to initialize Supabase client: {e}. "
+                "Please check your SUPABASE_URL and SUPABASE_ANON_KEY."
+            ) from e
+    
+    return _supabase_client
 
 
 def get_local_storage():
