@@ -986,15 +986,13 @@ class SupabaseClient:
             return self.get_all_users_with_reading_stats()
 
 
-# Global instance (will be initialized when needed)
+# Global instance (for non-Streamlit contexts only)
 _supabase_client: Optional[SupabaseClient] = None
 _local_storage = None
 
 
-def get_supabase_client():
-    """Get or create Supabase client instance. Always uses Supabase, no fallback to local storage."""
-    global _supabase_client
-    
+def create_supabase_client() -> SupabaseClient:
+    """Create a new Supabase client instance. Use this for session isolation."""
     # Check if Supabase credentials are available
     # Try Streamlit secrets first, then environment variables
     try:
@@ -1014,17 +1012,40 @@ def get_supabase_client():
             "For production, add them to Streamlit Secrets."
         )
     
-    # Always use Supabase
-    if _supabase_client is None:
-        try:
-            _supabase_client = SupabaseClient()
-            print("DEBUG: Supabase client initialized successfully")
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to initialize Supabase client: {e}. "
-                "Please check your SUPABASE_URL and SUPABASE_ANON_KEY."
-            ) from e
+    try:
+        client = SupabaseClient()
+        print("DEBUG: Supabase client created successfully")
+        return client
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to create Supabase client: {e}. "
+            "Please check your SUPABASE_URL and SUPABASE_ANON_KEY."
+        ) from e
+
+
+def get_supabase_client():
+    """
+    Get Supabase client instance with session isolation.
     
+    In Streamlit context: Creates a per-session client (stored in st.session_state)
+    Outside Streamlit: Uses global singleton (for backwards compatibility)
+    """
+    # Try to use Streamlit session state for session isolation
+    try:
+        import streamlit as st
+        if hasattr(st, 'session_state'):
+            # Use session-specific client for proper isolation
+            if 'supabase_client_instance' not in st.session_state:
+                st.session_state.supabase_client_instance = create_supabase_client()
+            return st.session_state.supabase_client_instance
+    except (ImportError, RuntimeError, AttributeError):
+        # Not in Streamlit context, use global singleton
+        pass
+    
+    # Fallback to global singleton (for non-Streamlit contexts)
+    global _supabase_client
+    if _supabase_client is None:
+        _supabase_client = create_supabase_client()
     return _supabase_client
 
 

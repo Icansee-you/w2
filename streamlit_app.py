@@ -821,7 +821,7 @@ def ensure_eli5_summary(article: Dict[str, Any], supabase, show_spinner: bool = 
         
         # Use spinner if requested (for UI feedback)
         if show_spinner:
-            with st.spinner("🔄 Eenvoudige uitleg genereren..."):
+            with st.spinner("🔄 Kort & Simpel genereren..."):
                 result = generate_eli5_summary_nl_with_llm(text, article.get('title', ''))
         else:
             # Try with timeout to prevent freezing
@@ -1075,7 +1075,7 @@ def render_article_detail(article_id: str):
             
             st.markdown(f"""
             <div class="eli5-box">
-                <div class="eli5-title">📚 Leg uit alsof ik 5 ben:</div>
+                <div class="eli5-title">📚 Kort & Simpel:</div>
                 {article['eli5_summary_nl']}
                 <div class="eli5-llm-badge">Gegenereerd met: {llm_display}</div>
             </div>
@@ -1084,7 +1084,7 @@ def render_article_detail(article_id: str):
         else:
             # ELI5 doesn't exist - show placeholder with manual generation button
             # Page loads immediately without waiting for ELI5 generation
-            st.info("📚 Eenvoudige uitleg is nog niet beschikbaar voor dit artikel.")
+            st.info("📚 Kort & Simpel is nog niet beschikbaar voor dit artikel.")
             
             # Check if we have API keys
             has_llm_keys = any([
@@ -1096,9 +1096,9 @@ def render_article_detail(article_id: str):
             
             if has_llm_keys:
                 # Show button to manually generate ELI5 (optional, non-blocking)
-                if st.button("🔄 Genereer Eenvoudige Uitleg Nu", use_container_width=True):
+                if st.button("🔄 Genereer Kort & Simpel Nu", use_container_width=True):
                     # Generate ELI5 when button is clicked
-                    with st.spinner("🔄 Eenvoudige uitleg genereren..."):
+                    with st.spinner("🔄 Kort & Simpel genereren..."):
                         text = f"{article.get('title', '')} {article.get('description', '')}"
                         if article.get('full_content'):
                             text += f" {article.get('full_content', '')[:1000]}"
@@ -1115,9 +1115,9 @@ def render_article_detail(article_id: str):
                             # Rerun to show the ELI5
                             st.rerun()
                         else:
-                            st.error("⚠️ Eenvoudige uitleg kon niet worden gegenereerd. Probeer het later opnieuw.")
+                            st.error("⚠️ Kort & Simpel kon niet worden gegenereerd. Probeer het later opnieuw.")
                 else:
-                    st.caption("💡 Tip: De automatische RSS checker genereert ELI5 samenvattingen in de achtergrond. Of klik op de knop hierboven om het nu te genereren.")
+                    st.caption("💡 Tip: De automatische RSS checker genereert Kort & Simpel samenvattingen in de achtergrond. Of klik op de knop hierboven om het nu te genereren.")
             else:
                 st.caption("ℹ️ Geen LLM API keys geconfigureerd. ELI5 samenvattingen worden niet gegenereerd.")
             
