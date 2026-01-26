@@ -1892,8 +1892,63 @@ def main():
             st.session_state.rss_checker_started = False
     
     # Check authentication
-    # IMPORTANT: If user is already in session_state, keep it (don't overwrite with Supabase session)
-    # This ensures manual logins are preserved across page navigations
+    # CRITICAL: Always preserve st.session_state.user if it exists
+    # This ensures logins are preserved across page navigations
+    
+    # Debug: Log current state
+    if st.session_state.get('debug_auth', False):
+        print(f"[AUTH DEBUG] st.session_state.user exists: {st.session_state.user is not None}")
+        if st.session_state.user:
+            print(f"[AUTH DEBUG] User ID: {get_user_id(st.session_state.user)}")
+            print(f"[AUTH DEBUG] User email: {get_user_email(st.session_state.user)}")
+    
+    # First, try to restore from Supabase session if user is not in session_state
+    # But ONLY if user is not already in session_state (to avoid overwriting)
+    if st.session_state.user is None:
+        # Try to restore user from Supabase session (if user previously logged in)
+        # No auto-login - users must manually sign up and login
+        try:
+            user = supabase.get_current_user()
+            if user:
+                # Store user in session state to preserve across page navigations
+                st.session_state.user = user
+                # Mark that we restored from session
+                st.session_state.manual_login_performed = True
+                if st.session_state.get('debug_auth', False):
+                    print(f"[AUTH DEBUG] Restored user from Supabase session: {get_user_email(user)}")
+        except Exception as e:
+            # If get_current_user fails, user is not logged in - that's OK
+            # User can browse the site without login, but won't have personalization
+            if st.session_state.get('debug_auth', False):
+                print(f"[AUTH DEBUG] Could not restore from Supabase session: {e}")
+            pass
+    else:
+        # User is already in session_state - verify it's still valid
+        # This helps catch cases where the session might have expired
+        if st.session_state.get('debug_auth', False):
+            print(f"[AUTH DEBUG] User already in session_state, verifying...")
+        try:
+            # Verify the session is still valid by checking Supabase
+            current_user = supabase.get_current_user()
+            if current_user:
+                current_user_id = get_user_id(current_user)
+                session_user_id = get_user_id(st.session_state.user)
+                # If IDs don't match, update session_state
+                if current_user_id and session_user_id and current_user_id != session_user_id:
+                    if st.session_state.get('debug_auth', False):
+                        print(f"[AUTH DEBUG] User ID mismatch, updating session_state")
+                    st.session_state.user = current_user
+                elif not session_user_id and current_user_id:
+                    # Session state user has no ID, but Supabase has one - update
+                    if st.session_state.get('debug_auth', False):
+                        print(f"[AUTH DEBUG] Updating session_state user with ID from Supabase")
+                    st.session_state.user = current_user
+        except Exception as e:
+            # If verification fails, keep the existing session_state.user
+            # This ensures we don't lose the user if Supabase check fails
+            if st.session_state.get('debug_auth', False):
+                print(f"[AUTH DEBUG] Could not verify session, keeping existing user: {e}")
+            pass
     
     # Always ensure preferences are loaded if user exists
     if st.session_state.user and st.session_state.preferences is None:
@@ -1903,24 +1958,6 @@ def main():
                 st.session_state.preferences = supabase.get_user_preferences(user_id)
             except Exception as e:
                 print(f"Error loading preferences: {e}")
-    
-    if st.session_state.user is None:
-        # Try to restore user from Supabase session (if user previously logged in)
-        # No auto-login - users must manually sign up and login
-        try:
-            user = supabase.get_current_user()
-            if user:
-                # Store user in session state to preserve across page navigations
-                st.session_state.user = user
-                # Load preferences if not already loaded
-                if st.session_state.preferences is None:
-                    user_id = get_user_id(user)
-                    if user_id:
-                        st.session_state.preferences = supabase.get_user_preferences(user_id)
-        except Exception as e:
-            # If get_current_user fails, user is not logged in - that's OK
-            # User can browse the site without login, but won't have personalization
-            pass
     
     # Render horizontal menu
     render_horizontal_menu()
