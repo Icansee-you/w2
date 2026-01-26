@@ -7,6 +7,12 @@ from datetime import datetime
 import hashlib
 import sys
 
+
+def _log_with_timestamp(message: str):
+    """Helper function to print log messages with timestamp."""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{timestamp}] {message}")
+
 # Workaround for Python 3.13: cgi module was removed
 # Patch cgi module before feedparser tries to import it
 try:
@@ -102,13 +108,13 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
                 categorization_llm = categorization_result.get('llm', 'Unknown')
                 
                 # Log which LLM was used
-                print(f"[INFO] Article categorized with {categorization_llm}: {main_category}")
+                _log_with_timestamp(f"[INFO] Article categorized with {categorization_llm}: {main_category}")
                 
                 # If LLM returned 'Keywords' or 'LLM-Failed', log a warning
                 if categorization_llm in ['Keywords', 'Keywords-Fallback', 'Keywords-Error']:
-                    print(f"[ERROR] LLM categorization returned {categorization_llm} - this should NEVER happen! RouteLLM should be used.")
+                    _log_with_timestamp(f"[ERROR] LLM categorization returned {categorization_llm} - this should NEVER happen! RouteLLM should be used.")
                 elif categorization_llm == 'LLM-Failed':
-                    print(f"[WARN] All LLM categorization failed - using default 'Algemeen'")
+                    _log_with_timestamp(f"[WARN] All LLM categorization failed - using default 'Algemeen'")
             else:
                 # Backward compatibility
                 categories = categorization_result if isinstance(categorization_result, list) else []
@@ -119,14 +125,14 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
             
             # Ensure we have at least one category
             if not categories or len(categories) == 0:
-                print(f"[WARN] No categories from LLM, using default 'Algemeen'")
+                _log_with_timestamp(f"[WARN] No categories from LLM, using default 'Algemeen'")
                 categories = ['Algemeen']
                 main_category = 'Algemeen'
                 sub_categories = []
                 categorization_argumentation = 'LLM categorisatie faalde - standaard categorie gebruikt'
                 categorization_llm = 'LLM-Failed'
         except Exception as e:
-            print(f"[ERROR] LLM categorization failed completely: {e}")
+            _log_with_timestamp(f"[ERROR] LLM categorization failed completely: {e}")
             # Use default category, no keyword fallback
             categories = ['Algemeen']
             main_category = 'Algemeen'
@@ -137,7 +143,7 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
     # ALWAYS use LLM categorization - no keyword fallback
     # If use_llm_categorization is False, we still try LLM (but log a warning)
     if not use_llm_categorization:
-        print(f"[WARN] use_llm_categorization=False but LLM categorization is required. Using LLM anyway.")
+        _log_with_timestamp(f"[WARN] use_llm_categorization=False but LLM categorization is required. Using LLM anyway.")
         try:
             categorization_result = categorize_article(title, description, content or '', rss_feed_url=rss_feed_url)
             if isinstance(categorization_result, dict):
@@ -153,7 +159,7 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
                 categorization_argumentation = ''
                 categorization_llm = 'LLM-Failed'
         except Exception as e:
-            print(f"[ERROR] LLM categorization failed: {e}")
+            _log_with_timestamp(f"[ERROR] LLM categorization failed: {e}")
             categories = ['Algemeen']
             main_category = 'Algemeen'
             sub_categories = []
@@ -206,9 +212,9 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
             if cleanup_result.get('success'):
                 deleted_count = cleanup_result.get('deleted_count', 0)
                 if deleted_count > 0:
-                    print(f"[RSS Feed] Cleaned up {deleted_count} articles older than 72 hours")
+                    _log_with_timestamp(f"[RSS Feed] Cleaned up {deleted_count} articles older than 72 hours")
         except Exception as cleanup_error:
-            print(f"[RSS Feed] Error during cleanup: {cleanup_error}")
+            _log_with_timestamp(f"[RSS Feed] Error during cleanup: {cleanup_error}")
     
     try:
         # Parse RSS feed
@@ -278,7 +284,7 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                         else:
                             article_is_new = True
                     except Exception as e:
-                        print(f"Error checking article existence in Supabase: {e}")
+                        _log_with_timestamp(f"Error checking article existence in Supabase: {e}")
                         article_is_new = True  # Assume new if check fails
                 else:
                     article_is_new = True  # Unknown storage type, assume new
@@ -297,18 +303,18 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                             storage.upsert_article(article_data)
                             inserted_count += 1
                         except Exception as e:
-                            print(f"Error upserting new article in Supabase: {e}")
+                            _log_with_timestamp(f"Error upserting new article in Supabase: {e}")
                             skipped_count += 1
                     else:
                         storage.upsert_article(article_data)
                         inserted_count += 1
                 else:
                     # Article already exists - skip parsing/categorization to save RouteLLM API calls
-                    print(f"[RSS Checker] Article {stable_id[:8]}... already exists with categorization, skipping RouteLLM call")
+                    _log_with_timestamp(f"[RSS Checker] Article {stable_id[:8]}... already exists, skipping ALL processing (no RouteLLM call)")
                     updated_count += 1
                     
             except Exception as e:
-                print(f"Error processing entry: {e}")
+                _log_with_timestamp(f"Error processing entry: {e}")
                 skipped_count += 1
                 continue
         
@@ -360,10 +366,10 @@ def generate_missing_eli5_summaries(limit: int = 5) -> int:
                     storage.update_article_eli5(article['id'], eli5_summary)
                     generated_count += 1
             except Exception as e:
-                print(f"Error generating ELI5 for article {article.get('id')}: {e}")
+                _log_with_timestamp(f"Error generating ELI5 for article {article.get('id')}: {e}")
                 continue
     except Exception as e:
-        print(f"Error getting articles for ELI5: {e}")
+        _log_with_timestamp(f"Error getting articles for ELI5: {e}")
     
     return generated_count
 
@@ -405,7 +411,7 @@ def recategorize_all_articles(limit: int = None, use_llm: bool = True) -> Dict[s
                 
                 # Ensure we have at least a title
                 if not title:
-                    print(f"  ⚠️ Skipping article {article.get('id', 'unknown')}: no title")
+                    _log_with_timestamp(f"  ⚠️ Skipping article {article.get('id', 'unknown')}: no title")
                     errors += 1
                     processed += 1
                     continue
@@ -420,7 +426,7 @@ def recategorize_all_articles(limit: int = None, use_llm: bool = True) -> Dict[s
                         new_categories = result if isinstance(result, list) else ['Algemeen']
                         categorization_llm = 'LLM-Failed'
                 except Exception as llm_error:
-                    print(f"  ⚠️ LLM categorization failed for article {article.get('id', 'unknown')}: {llm_error}")
+                    _log_with_timestamp(f"  ⚠️ LLM categorization failed for article {article.get('id', 'unknown')}: {llm_error}")
                     # Use default category, no keyword fallback
                     new_categories = ['Algemeen']
                     categorization_llm = 'LLM-Failed'
@@ -442,7 +448,7 @@ def recategorize_all_articles(limit: int = None, use_llm: bool = True) -> Dict[s
                 processed += 1
                 
             except Exception as e:
-                print(f"Error recategorizing article {article.get('id', 'unknown')}: {e}")
+                _log_with_timestamp(f"Error recategorizing article {article.get('id', 'unknown')}: {e}")
                 errors += 1
                 processed += 1
                 continue

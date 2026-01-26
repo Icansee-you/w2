@@ -116,8 +116,8 @@ class LocalStorage:
         from categorization_engine import get_all_categories
         return {
             "user_id": user_id,
-            "blacklist_keywords": ["Trump", "Rusland", "Soedan", "aanslag"],
-            "selected_categories": get_all_categories()  # Show all by default
+            "blacklist_keywords": [],  # No keywords blocked by default for new users
+            "selected_categories": get_all_categories()  # All categories selected by default
         }
     
     def update_user_preferences(self, user_id: str, blacklist_keywords: List[str] = None, selected_categories: List[str] = None) -> bool:

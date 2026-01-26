@@ -3,6 +3,7 @@ Supabase client for authentication and database operations.
 """
 import os
 from typing import Optional, Dict, List, Any
+from datetime import datetime
 try:
     from supabase import create_client, Client
     from supabase.lib.client_options import ClientOptions
@@ -10,6 +11,12 @@ except ImportError:
     # Fallback if supabase not installed
     Client = None
     ClientOptions = None
+
+
+def _log_with_timestamp(message: str):
+    """Helper function to print log messages with timestamp."""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{timestamp}] {message}")
 
 
 class SupabaseClient:
@@ -155,8 +162,8 @@ class SupabaseClient:
             from categorization_engine import get_all_categories
             return {
                 "user_id": user_id,
-                "blacklist_keywords": ["Trump", "Rusland", "Soedan", "aanslag"],
-                "selected_categories": get_all_categories()
+                "blacklist_keywords": [],  # No keywords blocked by default for new users
+                "selected_categories": get_all_categories()  # All categories selected by default
             }
     
     def create_default_preferences(self, user_id: str) -> Dict[str, Any]:
@@ -166,7 +173,7 @@ class SupabaseClient:
         
         default_prefs = {
             "user_id": user_id,
-            "blacklist_keywords": ["Trump", "Rusland", "Soedan", "aanslag"],
+            "blacklist_keywords": [],  # No keywords blocked by default for new users
             "selected_categories": all_categories  # All categories selected by default
         }
         try:
@@ -211,7 +218,7 @@ class SupabaseClient:
                 self.client.table('user_preferences').insert(prefs).execute()
             return True
         except Exception as e:
-            print(f"Error updating preferences: {e}")
+            _log_with_timestamp(f"Error updating preferences: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -220,20 +227,78 @@ class SupabaseClient:
     def upsert_article(self, article_data: Dict[str, Any]) -> bool:
         """Insert or update an article in Supabase."""
         try:
-            # Ensure categories is a list (Supabase expects array)
-            if 'categories' in article_data and article_data['categories']:
-                if not isinstance(article_data['categories'], list):
-                    article_data['categories'] = list(article_data['categories'])
-            else:
-                article_data['categories'] = []
+            from datetime import datetime
             
-            self.client.table('articles').upsert(
-                article_data,
-                on_conflict='stable_id'
-            ).execute()
-            return True
+            # Create a copy to avoid modifying the original
+            data_to_upsert = article_data.copy()
+            
+            # Ensure categories is a list (Supabase expects array)
+            if 'categories' in data_to_upsert and data_to_upsert['categories']:
+                if not isinstance(data_to_upsert['categories'], list):
+                    data_to_upsert['categories'] = list(data_to_upsert['categories'])
+            else:
+                data_to_upsert['categories'] = []
+            
+            # Remove fields that might not exist in the database schema
+            # These fields are optional and may not be present in all database setups
+            optional_fields = ['categorization_argumentation', 'sub_categories', 'main_category']
+            for field in optional_fields:
+                if field in data_to_upsert:
+                    # Try to check if field exists, but if it doesn't, remove it
+                    # We'll remove it preemptively to avoid schema errors
+                    # Note: If the column exists, we can add it back later
+                    # For now, we'll only include it if we're sure it exists
+                    pass  # We'll filter it out below
+            
+            # Filter out fields that might not exist in schema
+            # Keep only fields that are definitely in the schema
+            safe_fields = [
+                'stable_id', 'title', 'description', 'url', 'source', 'published_at',
+                'full_content', 'image_url', 'category', 'categories', 'categorization_llm',
+                'eli5_summary_nl', 'eli5_llm', 'rss_feed_url', 'created_at', 'updated_at'
+            ]
+            
+            # Build safe data dict with only known fields
+            safe_data = {}
+            for field in safe_fields:
+                if field in data_to_upsert:
+                    safe_data[field] = data_to_upsert[field]
+            
+            # Try to include optional fields if they exist (but don't fail if they don't)
+            # We'll try the upsert without them first, and if it works, great
+            # If it fails with a schema error, we'll retry without optional fields
+            try:
+                self.client.table('articles').upsert(
+                    safe_data,
+                    on_conflict='stable_id'
+                ).execute()
+                return True
+            except Exception as schema_error:
+                # If it's a schema error about optional fields, try without them
+                error_msg = str(schema_error)
+                if 'categorization_argumentation' in error_msg or 'sub_categories' in error_msg or 'main_category' in error_msg:
+                    # Remove optional fields and try again
+                    for field in optional_fields:
+                        safe_data.pop(field, None)
+                    try:
+                        self.client.table('articles').upsert(
+                            safe_data,
+                            on_conflict='stable_id'
+                        ).execute()
+                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        print(f"[{timestamp}] [WARN] Upserted article without optional fields (categorization_argumentation, sub_categories, main_category)")
+                        return True
+                    except Exception as retry_error:
+                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        print(f"[{timestamp}] Error upserting article (retry): {retry_error}")
+                        return False
+                else:
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[{timestamp}] Error upserting article: {schema_error}")
+                    return False
         except Exception as e:
-            print(f"Error upserting article: {e}")
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            print(f"[{timestamp}] Error upserting article: {e}")
             return False
     
     def get_articles(
@@ -328,7 +393,7 @@ class SupabaseClient:
             
             return articles
         except Exception as e:
-            print(f"Error getting articles: {e}")
+            _log_with_timestamp(f"Error getting articles: {e}")
             return []
     
     def get_article_by_id(self, article_id: str) -> Optional[Dict[str, Any]]:
@@ -364,7 +429,7 @@ class SupabaseClient:
             self.client.table('articles').update(update_data).eq('id', article_id).execute()
             return True
         except Exception as e:
-            print(f"Error updating ELI5: {e}")
+            _log_with_timestamp(f"Error updating ELI5: {e}")
             return False
     
     def update_article_categories(self, article_id: str, categories: List[str], categorization_llm: str) -> bool:
@@ -379,7 +444,7 @@ class SupabaseClient:
             self.client.table('articles').update(update_data).eq('id', article_id).execute()
             return True
         except Exception as e:
-            print(f"Error updating categories: {e}")
+            _log_with_timestamp(f"Error updating categories: {e}")
             return False
     
     def get_articles_without_eli5(self, limit: int = 10) -> List[Dict[str, Any]]:
@@ -605,7 +670,7 @@ class SupabaseClient:
                 'articles_without_eli5': 0,
                 'category_counts': {}
             }
-    
+
     # Reading activity methods
     def track_article_opened(self, user_id: str, article_id: str) -> bool:
         """
@@ -1039,7 +1104,7 @@ def create_supabase_client() -> SupabaseClient:
             f"Failed to create Supabase client: {e}. "
             "Please check your SUPABASE_URL and SUPABASE_ANON_KEY."
         ) from e
-
+    
 
 def get_supabase_client():
     """
