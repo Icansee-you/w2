@@ -31,7 +31,19 @@ from secrets_helper import get_secret
 from supabase_client import get_supabase_client
 from articles_repository import fetch_and_upsert_articles, generate_missing_eli5_summaries
 from nlp_utils import generate_eli5_summary_nl_with_llm
-from rss_background_checker import start_background_checker, get_last_check_info, is_running
+
+# Import RSS background checker functions (with error handling for deployment)
+try:
+    from rss_background_checker import start_background_checker, get_last_check_info, is_running
+except ImportError as e:
+    # Fallback if rss_background_checker cannot be imported (e.g., missing dependencies)
+    print(f"Warning: Could not import rss_background_checker: {e}")
+    def start_background_checker():
+        pass
+    def get_last_check_info():
+        return None
+    def is_running():
+        return False
 
 # Page configuration
 st.set_page_config(
