@@ -73,25 +73,6 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
                 image_url = link.get('href')
                 break
     
-    # Determine category (simplified - you can enhance this)
-    category = None
-    title_lower = (entry.get('title', '') or '').lower()
-    description_lower = (entry.get('description', '') or entry.get('summary', '') or '').lower()
-    full_text = f"{title_lower} {description_lower}"
-    
-    if 'trump' in full_text:
-        category = 'Trump'
-    elif 'rusland' in full_text:
-        category = 'Rusland'
-    elif any(kw in full_text for kw in ['politiek', 'kabinet', 'minister', 'regering']):
-        category = 'Politiek'
-    elif any(kw in full_text for kw in ['voetbal', 'sport', 'ajax', 'psv']):
-        category = 'Sport'
-    elif any(kw in full_text for kw in ['nederland', 'nederlands']):
-        category = 'Nationaal'
-    else:
-        category = 'Overig'
-    
     stable_id = generate_stable_id(entry.get('link', ''), published_at)
     
     # Get title, description, and content for categorization
@@ -99,24 +80,35 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
     description = entry.get('description') or entry.get('summary', '')[:2000]
     content = entry.get('content', [{}])[0].get('value', '')[:10000] if entry.get('content') else None
     
-    # Categorize article - ALWAYS use LLM categorization (RouteLLM preferred)
-    # NOTE: This categorization will only be used for NEW articles.
-    # Existing articles will preserve their existing LLM categorization (see fetch_and_upsert_articles)
-    if use_llm_categorization:
-        try:
-            # Use LLM categorization (RouteLLM preferred, falls back to other LLMs if needed)
-            # Only do this for NEW articles - existing articles will preserve their categorization
-            categorization_result = categorize_article(title, description, content or '', rss_feed_url=rss_feed_url)
-            if isinstance(categorization_result, dict):
-                categories = categorization_result.get('categories', [])
-                main_category = categorization_result.get('main_category')
-                sub_categories = categorization_result.get('sub_categories', [])
-                categorization_argumentation = categorization_result.get('categorization_argumentation', '')
-                categorization_llm = categorization_result.get('llm', 'Unknown')
-                
-                # If LLM returned 'Keywords' or 'LLM-Failed', log a warning
-                if categorization_llm in ['Keywords', 'LLM-Failed']:
-                    print(f"[WARN] LLM categorization returned {categorization_llm} - this should not happen if RouteLLM is configured")
+            # Categorize article - ALWAYS use LLM categorization (RouteLLM preferred)
+            # NOTE: This categorization will only be used for NEW articles.
+            # Existing articles will preserve their existing LLM categorization (see fetch_and_upsert_articles)
+            if use_llm_categorization:
+                try:
+                    # Ensure RouteLLM API key is available
+                    import os
+                    if not os.getenv('ROUTELLM_API_KEY'):
+                        # Set default RouteLLM API key if not available
+                        os.environ['ROUTELLM_API_KEY'] = 's2_760166137897436c8b1dc5248b05db5a'
+                    
+                    # Use LLM categorization (RouteLLM preferred, falls back to other LLMs if needed)
+                    # Only do this for NEW articles - existing articles will preserve their categorization
+                    categorization_result = categorize_article(title, description, content or '', rss_feed_url=rss_feed_url)
+                    if isinstance(categorization_result, dict):
+                        categories = categorization_result.get('categories', [])
+                        main_category = categorization_result.get('main_category')
+                        sub_categories = categorization_result.get('sub_categories', [])
+                        categorization_argumentation = categorization_result.get('categorization_argumentation', '')
+                        categorization_llm = categorization_result.get('llm', 'Unknown')
+                        
+                        # Log which LLM was used
+                        print(f"[INFO] Article categorized with {categorization_llm}: {main_category}")
+                        
+                        # If LLM returned 'Keywords' or 'LLM-Failed', log a warning
+                        if categorization_llm in ['Keywords', 'Keywords-Fallback', 'Keywords-Error']:
+                            print(f"[ERROR] LLM categorization returned {categorization_llm} - this should NEVER happen! RouteLLM should be used.")
+                        elif categorization_llm == 'LLM-Failed':
+                            print(f"[WARN] All LLM categorization failed - using default 'Algemeen'")
             else:
                 # Backward compatibility
                 categories = categorization_result if isinstance(categorization_result, list) else []
@@ -177,7 +169,7 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
         'published_at': published_at.isoformat() if published_at else None,
         'full_content': content,
         'image_url': image_url[:1000] if image_url else None,
-        'category': category,  # Legacy single category
+        'category': main_category or 'Algemeen',  # Legacy single category (use main_category)
         'categories': categories,  # New: multiple categories
         'main_category': main_category,  # Main category
         'sub_categories': sub_categories,  # Sub categories

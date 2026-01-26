@@ -8,6 +8,12 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 import os
 
+# Ensure RouteLLM API key is available for categorization
+# This is set here to ensure it's available even when Streamlit is not initialized
+ROUTELLM_API_KEY = os.getenv('ROUTELLM_API_KEY', 's2_760166137897436c8b1dc5248b05db5a')
+if ROUTELLM_API_KEY:
+    os.environ['ROUTELLM_API_KEY'] = ROUTELLM_API_KEY
+
 # RSS feed URLs to check
 RSS_FEED_URLS = [
     'https://feeds.nos.nl/nosnieuwsalgemeen',
