@@ -557,15 +557,27 @@ def _categorize_with_routellm(text: str, title: str, api_key: str, rss_feed_url:
                     # Model might not be available, try next
                     continue
                 elif response.status_code == 401:
-                    print(f"[RouteLLM] Authentication error - check API key")
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[{timestamp}] [RouteLLM] ❌ Authentication error (401) - API key is invalid or expired")
+                    print(f"[{timestamp}] [RouteLLM] Please check your ROUTELLM_API_KEY in Streamlit Secrets or .env file")
+                    return None
+                elif response.status_code == 403:
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    try:
+                        error_detail = response.json()
+                        print(f"[{timestamp}] [RouteLLM] ❌ Authorization error (403): {error_detail}")
+                    except:
+                        print(f"[{timestamp}] [RouteLLM] ❌ Authorization error (403) - You are not authorized to make requests")
+                    print(f"[{timestamp}] [RouteLLM] This usually means your API key has expired or doesn't have the right permissions")
                     return None
                 else:
                     # Log error but try next model
-                    print(f"[RouteLLM] Model {model} returned status {response.status_code}")
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[{timestamp}] [RouteLLM] Model {model} returned status {response.status_code}")
                     if response.status_code != 400:  # Don't log 400 as it's just model not available
                         try:
                             error_detail = response.json()
-                            print(f"[RouteLLM] Error detail: {error_detail}")
+                            print(f"[{timestamp}] [RouteLLM] Error detail: {error_detail}")
                         except:
                             pass
                     continue

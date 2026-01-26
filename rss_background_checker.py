@@ -127,6 +127,10 @@ def cleanup_old_articles():
     global _last_cleanup_time
     
     try:
+        # Suppress Streamlit warnings in background thread
+        import warnings
+        warnings.filterwarnings('ignore', category=UserWarning, message='.*ScriptRunContext.*')
+        
         from supabase_client import get_supabase_client
         
         print(f"[RSS Checker] Starting cleanup of articles older than 72 hours at {datetime.now()}")
@@ -152,6 +156,10 @@ def cleanup_old_articles():
 def _background_checker_loop():
     """Background thread that checks RSS feeds periodically and cleans up old articles."""
     global _checker_running, _last_cleanup_time
+    
+    # Suppress Streamlit warnings in background thread (this is normal - background threads don't have Streamlit context)
+    import warnings
+    warnings.filterwarnings('ignore', category=UserWarning, message='.*ScriptRunContext.*')
     
     print("[RSS Checker] Background checker started")
     

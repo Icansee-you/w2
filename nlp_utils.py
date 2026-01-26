@@ -172,7 +172,18 @@ ELI5 Samenvatting:"""
                     # Model might not be available, try next
                     continue
                 elif response.status_code == 401:
-                    print(f"[RouteLLM ELI5] Authentication error - check API key")
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[{timestamp}] [RouteLLM ELI5] ❌ Authentication error (401) - API key is invalid or expired")
+                    print(f"[{timestamp}] [RouteLLM ELI5] Please check your ROUTELLM_API_KEY in Streamlit Secrets or .env file")
+                    return None
+                elif response.status_code == 403:
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    try:
+                        error_detail = response.json()
+                        print(f"[{timestamp}] [RouteLLM ELI5] ❌ Authorization error (403): {error_detail}")
+                    except:
+                        print(f"[{timestamp}] [RouteLLM ELI5] ❌ Authorization error (403) - You are not authorized to make requests")
+                    print(f"[{timestamp}] [RouteLLM ELI5] This usually means your API key has expired or doesn't have the right permissions")
                     return None
                 else:
                     # Log error but try next model
