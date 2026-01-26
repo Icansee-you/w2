@@ -1184,7 +1184,7 @@ def render_nieuws_page():
                     pass
     
     # Filters
-    search_query = st.text_input("🔍 Zoeken", placeholder="Zoek in artikelen...", key="search")
+        search_query = st.text_input("🔍 Zoeken", placeholder="Zoek in artikelen...", key="search")
     
     st.markdown("---")
     
@@ -1727,8 +1727,12 @@ def render_gebruiker_page():
                     
                     st.session_state.user = user_dict
                     st.session_state.preferences = None  # Will be reloaded on next render
-                    # Mark that user manually logged in - prevent auto-login
+                    # CRITICAL: Mark that user manually logged in - this prevents:
+                    # 1. Auto-login with test@hotmail.com
+                    # 2. Using Supabase session to restore user (which might have test@hotmail.com)
                     st.session_state.manual_login_performed = True
+                    # Store the user email in session state for verification
+                    st.session_state.manual_login_email = email
                     # Clear explicit logout flag when user successfully logs in manually
                     if 'user_explicitly_logged_out' in st.session_state:
                         del st.session_state.user_explicitly_logged_out
@@ -1771,6 +1775,10 @@ def render_gebruiker_page():
             supabase.sign_out()
             st.session_state.user = None
             st.session_state.preferences = None
+            # Reset manual login flags
+            st.session_state.manual_login_performed = False
+            if 'manual_login_email' in st.session_state:
+                del st.session_state.manual_login_email
             # Set flag to prevent auto-login after explicit logout
             st.session_state.user_explicitly_logged_out = True
             # Reset manual login flag so user can manually login again
@@ -1903,18 +1911,31 @@ def main():
                 print(f"Error loading preferences: {e}")
     
     if st.session_state.user is None:
-        # Only try to get session if user is not already logged in
-        # If manual_login_performed is True, we should NOT use Supabase session
-        # because the user manually logged in and we don't want to overwrite with test@hotmail.com
-        if not st.session_state.get('manual_login_performed', False):
-            # First try to get existing session from Supabase
-            # This will work if Supabase session is still valid
+        # CRITICAL: If user manually logged in, do NOT use Supabase session
+        # The Supabase session might contain test@hotmail.com from auto-login
+        # Instead, rely only on st.session_state which should preserve the manual login
+        manual_login = st.session_state.get('manual_login_performed', False)
+        
+        if manual_login:
+            # User manually logged in - st.session_state.user should be preserved
+            # If it's None, something went wrong - user needs to login again
+            # Do NOT try to restore from Supabase session as it might have wrong user
+            if st.session_state.user is None:
+                print("[WARN] Manual login was performed but user is None in session_state. User needs to login again.")
+                # Clear manual_login_performed so user can login again
+                st.session_state.manual_login_performed = False
+                if 'manual_login_email' in st.session_state:
+                    del st.session_state.manual_login_email
+        else:
+            # No manual login - safe to use Supabase session
+            # Try to restore from Supabase session (this is safe for auto-login scenarios)
+            user = None
             try:
                 user = supabase.get_current_user()
                 if user:
                     # Store user in session state to preserve across page navigations
                     st.session_state.user = user
-                    # Clear explicit logout flag if user successfully logged in manually
+                    # Clear explicit logout flag if user successfully logged in
                     if 'user_explicitly_logged_out' in st.session_state:
                         del st.session_state.user_explicitly_logged_out
                     # Load preferences if not already loaded
@@ -1923,18 +1944,13 @@ def main():
                         if user_id:
                             st.session_state.preferences = supabase.get_user_preferences(user_id)
             except Exception as e:
-                # If get_current_user fails, continue to auto-login
+                # If get_current_user fails, log error but continue
                 print(f"Could not get current user from Supabase session: {e}")
                 user = None
             
+            # Only auto-login if Supabase session has no user
             if user is None:
-                # Auto-login with test@hotmail.com ONLY if:
-                # 1. User has NOT manually logged in (manual_login_performed = False)
-                # 2. User has NOT explicitly logged out (user_explicitly_logged_out = False)
-                should_auto_login = (
-                    not st.session_state.get('manual_login_performed', False) and
-                    not st.session_state.get('user_explicitly_logged_out', False)
-                )
+                should_auto_login = not st.session_state.get('user_explicitly_logged_out', False)
                 
                 if should_auto_login:
                     # Only attempt once per session to avoid infinite loops
