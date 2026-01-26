@@ -506,6 +506,8 @@ if 'preferences' not in st.session_state:
     st.session_state.preferences = None
 if 'current_page' not in st.session_state:
     st.session_state.current_page = 'Nieuws'
+if 'manual_login_performed' not in st.session_state:
+    st.session_state.manual_login_performed = False  # Track if user manually logged in
 
 
 def init_supabase():
@@ -1707,6 +1709,8 @@ def render_gebruiker_page():
                 if result.get('success'):
                     st.session_state.user = result.get('user')
                     st.session_state.preferences = None
+                    # Mark that user manually logged in - prevent auto-login
+                    st.session_state.manual_login_performed = True
                     # Clear explicit logout flag when user successfully logs in manually
                     if 'user_explicitly_logged_out' in st.session_state:
                         del st.session_state.user_explicitly_logged_out
@@ -1728,6 +1732,8 @@ def render_gebruiker_page():
                 else:
                     result = supabase.sign_up(new_email, new_password)
                     if result.get('success'):
+                        # Mark that user manually registered - prevent auto-login
+                        st.session_state.manual_login_performed = True
                         # Clear explicit logout flag when user successfully registers
                         if 'user_explicitly_logged_out' in st.session_state:
                             del st.session_state.user_explicitly_logged_out
@@ -1749,6 +1755,8 @@ def render_gebruiker_page():
             st.session_state.preferences = None
             # Set flag to prevent auto-login after explicit logout
             st.session_state.user_explicitly_logged_out = True
+            # Reset manual login flag so user can manually login again
+            st.session_state.manual_login_performed = False
             # Reset auto-login flag
             if 'auto_login_attempted' in st.session_state:
                 del st.session_state.auto_login_attempted
@@ -1865,17 +1873,25 @@ def main():
     
     # Check authentication
     if st.session_state.user is None:
-        # First try to get existing session
+        # First try to get existing session from Supabase
         user = supabase.get_current_user()
         if user:
             st.session_state.user = user
+            # If we got a user from Supabase session, check if it's a manual login
+            # (if manual_login_performed is True, this is the user's actual session)
             # Clear explicit logout flag if user successfully logged in manually
             if 'user_explicitly_logged_out' in st.session_state:
                 del st.session_state.user_explicitly_logged_out
         else:
-            # Auto-login with test@hotmail.com if no user is logged in
-            # BUT: Don't auto-login if user explicitly logged out
-            if not st.session_state.get('user_explicitly_logged_out', False):
+            # Auto-login with test@hotmail.com ONLY if:
+            # 1. User has NOT manually logged in (manual_login_performed = False)
+            # 2. User has NOT explicitly logged out (user_explicitly_logged_out = False)
+            should_auto_login = (
+                not st.session_state.get('manual_login_performed', False) and
+                not st.session_state.get('user_explicitly_logged_out', False)
+            )
+            
+            if should_auto_login:
                 # Only attempt once per session to avoid infinite loops
                 if 'auto_login_attempted' not in st.session_state:
                     st.session_state.auto_login_attempted = True
