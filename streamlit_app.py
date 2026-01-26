@@ -511,8 +511,16 @@ st.markdown("""
 
 # Initialize session state
 # CRITICAL: Never reset 'user' if it already exists - this preserves login across reruns
+# IMPORTANT: Check if user exists BEFORE initializing to None
+# This prevents losing the user on page navigation/reload
 if 'user' not in st.session_state:
     st.session_state.user = None
+else:
+    # User already exists - preserve it (don't reset to None)
+    # This is critical for maintaining login across page navigations
+    if st.session_state.user is not None:
+        # User is logged in - keep it!
+        pass
 if 'supabase' not in st.session_state:
     st.session_state.supabase = None
 if 'preferences' not in st.session_state:
@@ -739,12 +747,37 @@ def render_horizontal_menu():
     if user_email:
         user_info_html = f'<div class="user-info"><div>De volgende gebruiker is ingelogd: {user_email}</div><div class="last-update">Laatste update: {last_update_str}</div></div>'
     
-    # Build complete menu HTML
-    menu_html = f'<div class="horizontal-menu"><div class="menu-items-container"><a class="menu-item" href="?page=Nieuws" onclick="window.location.href=\'?page=Nieuws\'; return false;" target="_self">Nieuws</a><a class="menu-item" href="?page=Waarom" onclick="window.location.href=\'?page=Waarom\'; return false;" target="_self">Achtergrond</a><a class="menu-item" href="?page=Frustrate" onclick="window.location.href=\'?page=Frustrate\'; return false;" target="_self">Dit wil je niet</a><a class="menu-item" href="?page=Statistics" onclick="window.location.href=\'?page=Statistics\'; return false;" target="_self">Statistieken</a><a class="menu-item" href="?page=Gebruiker" onclick="window.location.href=\'?page=Gebruiker\'; return false;" target="_self">Gebruiker</a></div>{user_info_html}</div>'
+    # Build menu using Streamlit buttons instead of HTML links
+    # This prevents full page reloads that reset session state
+    # Use columns to create horizontal layout
+    menu_cols = st.columns([1, 1, 1, 1, 1, 2])
     
-    st.markdown(menu_html, unsafe_allow_html=True)
+    with menu_cols[0]:
+        if st.button("Nieuws", key="menu_nieuws", use_container_width=True):
+            st.query_params["page"] = "Nieuws"
+            st.rerun()
+    with menu_cols[1]:
+        if st.button("Achtergrond", key="menu_achtergrond", use_container_width=True):
+            st.query_params["page"] = "Waarom"
+            st.rerun()
+    with menu_cols[2]:
+        if st.button("Dit wil je niet", key="menu_frustrate", use_container_width=True):
+            st.query_params["page"] = "Frustrate"
+            st.rerun()
+    with menu_cols[3]:
+        if st.button("Statistieken", key="menu_statistics", use_container_width=True):
+            st.query_params["page"] = "Statistics"
+            st.rerun()
+    with menu_cols[4]:
+        if st.button("Gebruiker", key="menu_gebruiker", use_container_width=True):
+            st.query_params["page"] = "Gebruiker"
+            st.rerun()
+    with menu_cols[5]:
+        if user_info_html:
+            st.markdown(user_info_html, unsafe_allow_html=True)
     
     # Update current page from query params
+    # CRITICAL: Preserve user in session_state when updating page
     page = st.query_params.get("page", "Nieuws")
     # Check for admin page (can be accessed via ?page=Admin)
     # Note: Streamlit doesn't support custom routes like /admin, but you can use ?page=Admin
@@ -1904,13 +1937,17 @@ def main():
     # Supabase client sessions (cookies) don't persist in Streamlit server-side context
     # So we MUST rely on st.session_state.user as the source of truth
     
-    # Debug: Log current state
-    if st.session_state.get('debug_auth', False):
-        print(f"[AUTH DEBUG] st.session_state.user exists: {st.session_state.user is not None}")
-        if st.session_state.user:
-            print(f"[AUTH DEBUG] User ID: {get_user_id(st.session_state.user)}")
-            print(f"[AUTH DEBUG] User email: {get_user_email(st.session_state.user)}")
-            print(f"[AUTH DEBUG] user_persisted: {st.session_state.get('user_persisted', False)}")
+    # Debug: Log current state (always enabled for debugging)
+    print(f"[AUTH] === AUTHENTICATION CHECK ===")
+    print(f"[AUTH] st.session_state.user exists: {st.session_state.user is not None}")
+    print(f"[AUTH] 'user' key in session_state: {'user' in st.session_state}")
+    if st.session_state.user:
+        print(f"[AUTH] User ID: {get_user_id(st.session_state.user)}")
+        print(f"[AUTH] User email: {get_user_email(st.session_state.user)}")
+        print(f"[AUTH] user_persisted: {st.session_state.get('user_persisted', False)}")
+        print(f"[AUTH] manual_login_performed: {st.session_state.get('manual_login_performed', False)}")
+    else:
+        print(f"[AUTH] No user in session_state")
     
     # PRIMARY STRATEGY: If user is in session_state, KEEP IT - never reset to None
     # Only try to restore from Supabase if user is completely missing
