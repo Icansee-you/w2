@@ -66,17 +66,21 @@ git commit -m "Remove .env from git"
 
 ```toml
 [secrets]
-SUPABASE_URL = "https://skfizxuvxenrltqdwkha.supabase.co"
-SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNrZml6eHV2eGVucmx0cWR3a2hhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU5NTM2OTksImV4cCI6MjA4MTUyOTY5OX0.33ovbBa5MqxXokTPn-RB4C9s7sFG4OaRfl3Zuz0fR6Y"
+# VERPLICHT - Supabase Database
+SUPABASE_URL = "https://jouw-project.supabase.co"
+SUPABASE_ANON_KEY = "jouw-anon-key-hier"
 
-# LLM API Keys (voeg toe welke je hebt)
-GROQ_API_KEY = "je-groq-api-key-hier"
-HUGGINGFACE_API_KEY = "je-huggingface-api-key-hier"
-OPENAI_API_KEY = "je-openai-api-key-hier"
+# AANBEVOLEN - LLM voor categorisatie en ELI5
+ROUTELLM_API_KEY = "s2_760166137897436c8b1dc5248b05db5a"
+GROQ_API_KEY = "jouw-groq-api-key-hier"
+
+# OPTIONEEL - Alternatieve LLM providers (fallback)
+HUGGINGFACE_API_KEY = "jouw-huggingface-api-key-hier"
+OPENAI_API_KEY = "jouw-openai-api-key-hier"
 OPENAI_BASE_URL = "https://api.openai.com/v1"
-CHATLLM_API_KEY = "je-chatllm-api-key-hier"
+CHATLLM_API_KEY = "jouw-chatllm-api-key-hier"
 
-# Test User Password
+# OPTIONEEL - Test User Password
 TEST_USER_PASSWORD = "test123"
 ```
 
