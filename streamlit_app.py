@@ -510,6 +510,7 @@ st.markdown("""
     unsafe_allow_html=True)
 
 # Initialize session state
+# CRITICAL: Never reset 'user' if it already exists - this preserves login across reruns
 if 'user' not in st.session_state:
     st.session_state.user = None
 if 'supabase' not in st.session_state:
@@ -520,6 +521,8 @@ if 'current_page' not in st.session_state:
     st.session_state.current_page = 'Nieuws'
 if 'manual_login_performed' not in st.session_state:
     st.session_state.manual_login_performed = False  # Track if user manually logged in
+if 'user_persisted' not in st.session_state:
+    st.session_state.user_persisted = False  # Track if user was explicitly persisted
 
 
 def init_supabase():
@@ -1734,7 +1737,9 @@ def render_gebruiker_page():
                             'created_at': None
                         }
                     
+                    # CRITICAL: Store user in session_state - this persists across reruns
                     st.session_state.user = user_dict
+                    st.session_state.user_persisted = True  # Mark as explicitly persisted
                     st.session_state.preferences = None  # Will be reloaded on next render
                     # Mark that user manually logged in
                     st.session_state.manual_login_performed = True
@@ -1774,7 +1779,9 @@ def render_gebruiker_page():
         
         if st.button("🚪 Uitloggen", use_container_width=True):
             supabase.sign_out()
+            # CRITICAL: Only reset user to None on explicit logout
             st.session_state.user = None
+            st.session_state.user_persisted = False
             st.session_state.preferences = None
             # Reset manual login flags
             st.session_state.manual_login_performed = False
@@ -1892,8 +1899,10 @@ def main():
             st.session_state.rss_checker_started = False
     
     # Check authentication
-    # CRITICAL: Always preserve st.session_state.user if it exists
-    # This ensures logins are preserved across page navigations
+    # CRITICAL: Streamlit session state persists across reruns within the same browser session
+    # The key is to NEVER reset st.session_state.user to None once it's set
+    # Supabase client sessions (cookies) don't persist in Streamlit server-side context
+    # So we MUST rely on st.session_state.user as the source of truth
     
     # Debug: Log current state
     if st.session_state.get('debug_auth', False):
@@ -1901,54 +1910,37 @@ def main():
         if st.session_state.user:
             print(f"[AUTH DEBUG] User ID: {get_user_id(st.session_state.user)}")
             print(f"[AUTH DEBUG] User email: {get_user_email(st.session_state.user)}")
+            print(f"[AUTH DEBUG] user_persisted: {st.session_state.get('user_persisted', False)}")
     
-    # First, try to restore from Supabase session if user is not in session_state
-    # But ONLY if user is not already in session_state (to avoid overwriting)
+    # PRIMARY STRATEGY: If user is in session_state, KEEP IT - never reset to None
+    # Only try to restore from Supabase if user is completely missing
     if st.session_state.user is None:
-        # Try to restore user from Supabase session (if user previously logged in)
-        # No auto-login - users must manually sign up and login
+        # User is not in session_state - try to restore from Supabase session
+        # This only happens on first load or after explicit logout
         try:
             user = supabase.get_current_user()
             if user:
-                # Store user in session state to preserve across page navigations
+                # Store user in session state - this will persist across reruns
                 st.session_state.user = user
-                # Mark that we restored from session
+                st.session_state.user_persisted = True
                 st.session_state.manual_login_performed = True
                 if st.session_state.get('debug_auth', False):
                     print(f"[AUTH DEBUG] Restored user from Supabase session: {get_user_email(user)}")
         except Exception as e:
             # If get_current_user fails, user is not logged in - that's OK
-            # User can browse the site without login, but won't have personalization
             if st.session_state.get('debug_auth', False):
                 print(f"[AUTH DEBUG] Could not restore from Supabase session: {e}")
             pass
     else:
-        # User is already in session_state - verify it's still valid
-        # This helps catch cases where the session might have expired
+        # User IS in session_state - DO NOT VERIFY OR UPDATE
+        # Verification can cause issues if Supabase session expires but user is still valid
+        # The user in session_state is the source of truth
         if st.session_state.get('debug_auth', False):
-            print(f"[AUTH DEBUG] User already in session_state, verifying...")
-        try:
-            # Verify the session is still valid by checking Supabase
-            current_user = supabase.get_current_user()
-            if current_user:
-                current_user_id = get_user_id(current_user)
-                session_user_id = get_user_id(st.session_state.user)
-                # If IDs don't match, update session_state
-                if current_user_id and session_user_id and current_user_id != session_user_id:
-                    if st.session_state.get('debug_auth', False):
-                        print(f"[AUTH DEBUG] User ID mismatch, updating session_state")
-                    st.session_state.user = current_user
-                elif not session_user_id and current_user_id:
-                    # Session state user has no ID, but Supabase has one - update
-                    if st.session_state.get('debug_auth', False):
-                        print(f"[AUTH DEBUG] Updating session_state user with ID from Supabase")
-                    st.session_state.user = current_user
-        except Exception as e:
-            # If verification fails, keep the existing session_state.user
-            # This ensures we don't lose the user if Supabase check fails
-            if st.session_state.get('debug_auth', False):
-                print(f"[AUTH DEBUG] Could not verify session, keeping existing user: {e}")
-            pass
+            print(f"[AUTH DEBUG] User already in session_state - preserving (ID: {get_user_id(st.session_state.user)})")
+        
+        # Only update user_persisted flag if not already set
+        if not st.session_state.get('user_persisted', False):
+            st.session_state.user_persisted = True
     
     # Always ensure preferences are loaded if user exists
     if st.session_state.user and st.session_state.preferences is None:
