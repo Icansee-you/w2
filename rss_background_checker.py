@@ -104,6 +104,16 @@ def check_rss_feeds() -> dict:
         'success': len(errors) == 0
     }
     
+    # Log RouteLLM API usage statistics
+    try:
+        from categorization_engine import get_routellm_categorization_count
+        from nlp_utils import get_routellm_eli5_count
+        cat_calls = get_routellm_categorization_count()
+        eli5_calls = get_routellm_eli5_count()
+        print(f"[RSS Checker] RouteLLM API calls - Categorization: {cat_calls}, ELI5: {eli5_calls}, Total: {cat_calls + eli5_calls}")
+    except Exception as e:
+        print(f"[RSS Checker] Could not get RouteLLM stats: {e}")
+    
     print(f"[RSS Checker] Check complete: {total_inserted} new, {total_updated} updated, {len(errors)} errors")
     
     return _last_check_result

@@ -11,6 +11,20 @@ try:
 except ImportError:
     requests = None  # Will be handled gracefully in functions that use it
 
+# Global counter for RouteLLM API calls (ELI5)
+_routellm_eli5_calls = 0
+
+
+def get_routellm_eli5_count() -> int:
+    """Get the number of RouteLLM API calls for ELI5 generation."""
+    return _routellm_eli5_calls
+
+
+def reset_routellm_eli5_counter():
+    """Reset RouteLLM ELI5 API call counter."""
+    global _routellm_eli5_calls
+    _routellm_eli5_calls = 0
+
 
 def generate_eli5_summary_nl(article_text: str, title: str = "") -> Optional[str]:
     """
@@ -69,10 +83,17 @@ def generate_eli5_summary_nl_with_llm(article_text: str, title: str = "") -> Opt
 
 def _generate_with_routellm(text: str, title: str, api_key: str) -> Optional[str]:
     """Generate ELI5 summary using RouteLLM API with improved prompt."""
+    global _routellm_eli5_calls
     if requests is None:
         return None
     try:
         import json
+        from datetime import datetime
+        
+        # Increment counter BEFORE making the call
+        _routellm_eli5_calls += 1
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{timestamp}] [RouteLLM ELI5] API call #{_routellm_eli5_calls} - Generating ELI5 for: {title[:50]}...")
         
         # New improved prompt
         prompt = f"""Je bent een expert in het uitleggen van complexe onderwerpen op een begrijpelijke manier. 
@@ -144,6 +165,8 @@ ELI5 Samenvatting:"""
                             for prefix in prefixes:
                                 if summary.startswith(prefix):
                                     summary = summary[len(prefix):].strip()
+                            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            print(f"[{timestamp}] [RouteLLM ELI5] Successfully generated ELI5 (Total calls: {_routellm_eli5_calls})")
                             return summary
                 elif response.status_code == 400:
                     # Model might not be available, try next

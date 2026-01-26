@@ -494,9 +494,16 @@ def _categorize_with_huggingface(text: str, title: str, api_key: str, rss_feed_u
 
 def _categorize_with_routellm(text: str, title: str, api_key: str, rss_feed_url: str = None) -> Optional[Dict[str, Any]]:
     """Categorize using RouteLLM API (Abacus AI)."""
+    global _routellm_categorization_calls
     try:
         import requests
         import json
+        from datetime import datetime
+        
+        # Increment counter BEFORE making the call
+        _routellm_categorization_calls += 1
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{timestamp}] [RouteLLM CATEGORIZATION] API call #{_routellm_categorization_calls} - Categorizing article: {title[:50]}...")
         
         prompt = _get_categorization_prompt(title, text, rss_feed_url)
         
@@ -543,7 +550,8 @@ def _categorize_with_routellm(text: str, title: str, api_key: str, rss_feed_url:
                         if response_text:
                             parsed = _parse_categorization_response(response_text)
                             parsed['llm'] = 'RouteLLM'
-                            print(f"[RouteLLM] Successfully categorized using model {model}")
+                            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            print(f"[{timestamp}] [RouteLLM] Successfully categorized using model {model} (Total calls: {_routellm_categorization_calls})")
                             return parsed
                 elif response.status_code == 400:
                     # Model might not be available, try next
