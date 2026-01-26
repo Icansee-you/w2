@@ -18,8 +18,8 @@ RSS_FEED_URLS = [
 # Check interval in seconds (15 minutes = 900 seconds)
 CHECK_INTERVAL = 15 * 60  # 15 minutes
 
-# Daily cleanup interval in seconds (24 hours = 86400 seconds)
-DAILY_CLEANUP_INTERVAL = 24 * 60 * 60  # 24 hours
+# Cleanup is now done during RSS feed checks (every 15 minutes)
+# Articles older than 72 hours are automatically removed
 
 # Global state
 _checker_thread: Optional[threading.Thread] = None
@@ -32,6 +32,7 @@ _last_cleanup_time: Optional[datetime] = None
 def check_rss_feeds() -> dict:
     """
     Check all RSS feeds for new articles and process them.
+    Also cleans up articles older than 72 hours.
     
     Returns:
         Dict with summary of the check (inserted, updated, skipped, errors)
@@ -42,6 +43,9 @@ def check_rss_feeds() -> dict:
     global _last_check_time, _last_check_result
     
     print(f"[RSS Checker] Starting RSS feed check at {datetime.now()}")
+    
+    # First, cleanup old articles (older than 72 hours)
+    cleanup_old_articles()
     
     total_inserted = 0
     total_updated = 0
@@ -101,35 +105,36 @@ def check_rss_feeds() -> dict:
 
 def cleanup_old_articles():
     """
-    Delete articles older than 1 week (7 days).
-    This function is called daily.
+    Delete articles older than 72 hours (3 days).
+    This function is called during RSS feed checks.
     """
     global _last_cleanup_time
     
     try:
         from supabase_client import get_supabase_client
         
-        print(f"[RSS Checker] Starting daily cleanup of old articles at {datetime.now()}")
+        print(f"[RSS Checker] Starting cleanup of articles older than 72 hours at {datetime.now()}")
         supabase = get_supabase_client()
         
         if supabase:
-            result = supabase.delete_old_articles(days_old=7)
+            # Delete articles older than 72 hours (3 days)
+            result = supabase.delete_old_articles(hours_old=72)
             _last_cleanup_time = datetime.now()
             
             if result.get('success'):
                 deleted_count = result.get('deleted_count', 0)
-                print(f"[RSS Checker] Daily cleanup complete: deleted {deleted_count} articles older than 7 days")
+                print(f"[RSS Checker] Cleanup complete: deleted {deleted_count} articles older than 72 hours")
             else:
                 error = result.get('error', 'Unknown error')
-                print(f"[RSS Checker] Daily cleanup error: {error}")
+                print(f"[RSS Checker] Cleanup error: {error}")
         else:
             print("[RSS Checker] Cannot perform cleanup: Supabase client not available")
     except Exception as e:
-        print(f"[RSS Checker] Exception during daily cleanup: {e}")
+        print(f"[RSS Checker] Exception during cleanup: {e}")
 
 
 def _background_checker_loop():
-    """Background thread that checks RSS feeds periodically and performs daily cleanup."""
+    """Background thread that checks RSS feeds periodically and cleans up old articles."""
     global _checker_running, _last_cleanup_time
     
     print("[RSS Checker] Background checker started")
@@ -140,21 +145,11 @@ def _background_checker_loop():
     # Perform initial cleanup check
     cleanup_old_articles()
     
-    # Track when we last did cleanup
-    last_cleanup_check = datetime.now()
-    
     while _checker_running:
         try:
             # Check RSS feeds (every 15 minutes)
+            # This also performs cleanup of articles older than 72 hours
             check_rss_feeds()
-            
-            # Check if we need to do daily cleanup (every 24 hours)
-            now = datetime.now()
-            time_since_last_cleanup = (now - last_cleanup_check).total_seconds()
-            
-            if time_since_last_cleanup >= DAILY_CLEANUP_INTERVAL:
-                cleanup_old_articles()
-                last_cleanup_check = now
                 
         except Exception as e:
             print(f"[RSS Checker] Error in background checker loop: {e}")

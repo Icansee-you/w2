@@ -1,6 +1,6 @@
 """
 Streamlit app for NOS News Aggregator with horizontal menu.
-Pages: Nieuws, Waarom?, Gebruiker
+Pages: Nieuws, Achtergrond, Gebruiker
 """
 import os
 import sys
@@ -532,25 +532,37 @@ def _find_category_match_by_keywords(cat_name: str) -> Optional[str]:
     """Find matching new category based on partial keywords."""
     cat_lower = cat_name.lower()
     
-    # Buitenland keywords
-    if any(kw in cat_lower for kw in ['buitenland', 'internationaal', 'conflict', 'europa', 'oorlog']):
-        return 'Buitenland'
+    # Koningshuis keywords (highest priority)
+    if any(kw in cat_lower for kw in ['koningshuis', 'koning', 'koningin', 'prins', 'oranje']):
+        return 'Koningshuis'
+    
+    # Misdaad keywords
+    if any(kw in cat_lower for kw in ['misdaad', 'crimineel', 'diefstal', 'moord', 'aanslag', 'drugs']):
+        return 'Misdaad'
     
     # Sport keywords
     if any(kw in cat_lower for kw in ['sport', 'voetbal', 'wielrennen', 'olympisch']):
         return 'Sport'
     
-    # Bekende personen keywords
-    if any(kw in cat_lower for kw in ['bekende', 'nederlander', 'celebrity', 'artiest', 'acteur']):
-        return 'Bekende personen'
-    
-    # Koningshuis keywords
-    if any(kw in cat_lower for kw in ['koningshuis', 'koning', 'koningin', 'prins', 'oranje']):
-        return 'Koningshuis'
-    
     # Politiek keywords
     if any(kw in cat_lower for kw in ['politiek', 'kabinet', 'minister', 'regering', 'gemeente']):
         return 'Politiek'
+    
+    # Buitenland keywords
+    if any(kw in cat_lower for kw in ['buitenland', 'internationaal', 'conflict', 'europa', 'oorlog']):
+        return 'Buitenland'
+    
+    # Cultuur keywords
+    if any(kw in cat_lower for kw in ['cultuur', 'kunst', 'museum', 'theater', 'muziek']):
+        return 'Cultuur'
+    
+    # Opmerkelijk keywords
+    if any(kw in cat_lower for kw in ['opmerkelijk', 'bijzonder', 'vreemd', 'grappig']):
+        return 'Opmerkelijk'
+    
+    # Algemeen (default)
+    if any(kw in cat_lower for kw in ['algemeen', 'overig', 'nieuws']):
+        return 'Algemeen'
     
     return None
 
@@ -561,14 +573,15 @@ def _map_old_categories_to_new(old_categories: List[str], valid_categories: List
         return []
     
     # Mapping from old categories to new categories (case-insensitive matching)
-    # This maps all old category variations to the 5 new categories
+    # This maps all old category variations to the new 8 categories
     category_mapping = {
-        # Buitenland mappings
-        'buitenland - europa': 'Buitenland',
-        'buitenland - overig': 'Buitenland',
-        'internationale conflicten': 'Buitenland',
-        'buitenland': 'Buitenland',
-        'internationaal': 'Buitenland',
+        # Koningshuis mappings
+        'koningshuis': 'Koningshuis',
+        
+        # Misdaad mappings
+        'misdaad': 'Misdaad',
+        'crimineel': 'Misdaad',
+        'criminaliteit': 'Misdaad',
         
         # Sport mappings
         'sport - voetbal': 'Sport',
@@ -576,21 +589,36 @@ def _map_old_categories_to_new(old_categories: List[str], valid_categories: List
         'overige sport': 'Sport',
         'sport': 'Sport',
         
-        # Bekende personen mappings
-        'bekende nederlanders': 'Bekende personen',
-        'bekende personen': 'Bekende personen',
-        
-        # Koningshuis mappings (already correct)
-        'koningshuis': 'Koningshuis',
-        
         # Politiek mappings
         'nationale politiek': 'Politiek',
         'lokale politiek': 'Politiek',
         'politiek': 'Politiek',
         
-        # Other old categories that should be filtered out (not in new 5 categories)
-        'binnenland': None,  # Remove - not in new categories
-        'misdaad': None,  # Remove - not in new categories
+        # Buitenland mappings
+        'buitenland - europa': 'Buitenland',
+        'buitenland - overig': 'Buitenland',
+        'internationale conflicten': 'Buitenland',
+        'buitenland': 'Buitenland',
+        'internationaal': 'Buitenland',
+        
+        # Cultuur mappings
+        'cultuur': 'Cultuur',
+        'kunst': 'Cultuur',
+        'entertainment': 'Cultuur',
+        'bekende nederlanders': 'Cultuur',  # Map bekende personen to Cultuur
+        'bekende personen': 'Cultuur',  # Map bekende personen to Cultuur
+        
+        # Opmerkelijk mappings
+        'opmerkelijk': 'Opmerkelijk',
+        'bijzonder': 'Opmerkelijk',
+        
+        # Algemeen mappings
+        'algemeen': 'Algemeen',
+        'overig': 'Algemeen',
+        'binnenland': 'Algemeen',  # Map binnenland to Algemeen
+        'nieuws': 'Algemeen',
+        
+        # Other old categories that should be filtered out or mapped
         'huizenmarkt': None,  # Remove - not in new categories
         'economie': None,  # Remove - not in new categories
         'technologie': None,  # Remove - not in new categories
@@ -698,13 +726,17 @@ def render_horizontal_menu():
         user_info_html = f'<div class="user-info"><div>De volgende gebruiker is ingelogd: {user_email}</div><div class="last-update">Laatste update: {last_update_str}</div></div>'
     
     # Build complete menu HTML
-    menu_html = f'<div class="horizontal-menu"><div class="menu-items-container"><a class="menu-item" href="?page=Nieuws" onclick="window.location.href=\'?page=Nieuws\'; return false;" target="_self">Nieuws</a><a class="menu-item" href="?page=Waarom" onclick="window.location.href=\'?page=Waarom\'; return false;" target="_self">Waarom?</a><a class="menu-item" href="?page=Frustrate" onclick="window.location.href=\'?page=Frustrate\'; return false;" target="_self">Dit wil je niet</a><a class="menu-item" href="?page=Statistics" onclick="window.location.href=\'?page=Statistics\'; return false;" target="_self">Statistics</a><a class="menu-item" href="?page=Gebruiker" onclick="window.location.href=\'?page=Gebruiker\'; return false;" target="_self">Gebruiker</a></div>{user_info_html}</div>'
+    menu_html = f'<div class="horizontal-menu"><div class="menu-items-container"><a class="menu-item" href="?page=Nieuws" onclick="window.location.href=\'?page=Nieuws\'; return false;" target="_self">Nieuws</a><a class="menu-item" href="?page=Waarom" onclick="window.location.href=\'?page=Waarom\'; return false;" target="_self">Achtergrond</a><a class="menu-item" href="?page=Frustrate" onclick="window.location.href=\'?page=Frustrate\'; return false;" target="_self">Dit wil je niet</a><a class="menu-item" href="?page=Statistics" onclick="window.location.href=\'?page=Statistics\'; return false;" target="_self">Statistieken</a><a class="menu-item" href="?page=Gebruiker" onclick="window.location.href=\'?page=Gebruiker\'; return false;" target="_self">Gebruiker</a></div>{user_info_html}</div>'
     
     st.markdown(menu_html, unsafe_allow_html=True)
     
     # Update current page from query params
     page = st.query_params.get("page", "Nieuws")
-    if page in ["Nieuws", "Waarom", "Frustrate", "Statistics", "Gebruiker"]:
+    # Check for admin page (can be accessed via ?page=Admin)
+    # Note: Streamlit doesn't support custom routes like /admin, but you can use ?page=Admin
+    if page == "Admin":
+        st.session_state.current_page = "Admin"
+    elif page in ["Nieuws", "Waarom", "Frustrate", "Statistics", "Gebruiker"]:
         st.session_state.current_page = page
 
 
@@ -870,6 +902,16 @@ def render_article_detail(article_id: str):
             del st.query_params["article"]
             st.rerun()
         return
+    
+    # Track article opened (if user is logged in)
+    if st.session_state.user:
+        user_id = get_user_id(st.session_state.user)
+        if user_id:
+            try:
+                supabase.track_article_opened(user_id, article_id)
+            except Exception as e:
+                # Silently fail if tracking doesn't work (e.g., table doesn't exist yet)
+                print(f"Could not track article opened: {e}")
     
     # Render page immediately - don't wait for ELI5 generation
     # ELI5 will be generated in background or shown if it already exists
@@ -1140,18 +1182,7 @@ def render_nieuws_page():
                     pass
     
     # Filters
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        search_query = st.text_input("🔍 Zoeken", placeholder="Zoek in artikelen...", key="search")
-    with col2:
-        from categorization_engine import get_all_categories
-        all_categories = get_all_categories()
-        category_options = ["Alle"] + all_categories
-        category_filter = st.selectbox(
-            "Categorie",
-            category_options,
-            key="category_filter"
-        )
+    search_query = st.text_input("🔍 Zoeken", placeholder="Zoek in artikelen...", key="search")
     
     st.markdown("---")
     
@@ -1176,8 +1207,8 @@ def render_nieuws_page():
         else:
             st.info("🔍 Debug: Geen blacklist actief")
     
-    # Get articles
-    category = None if category_filter == "Alle" else category_filter
+    # Get articles (no category filter - always show all categories)
+    category = None
     try:
         categories_filter = selected_categories if (st.session_state.user and selected_categories) else None
         
@@ -1222,24 +1253,9 @@ def render_nieuws_page():
 
 
 def render_waarom_page():
-    """Render 'Waarom?' page."""
-    st.title("Waarom?")
-    st.markdown("---")
-    st.markdown("## Omdat het kan. Omdat het beter is.")
-    st.markdown("---")
-    st.markdown("""
-    Deze nieuwsaggregator is gemaakt om nieuws toegankelijker te maken voor iedereen.
-    
-    **Omdat het kan:**
-    - Moderne technologie maakt gepersonaliseerd nieuws mogelijk
-    - AI helpt artikelen te categoriseren en uit te leggen
-    - Iedereen verdient toegang tot begrijpelijk nieuws
-    
-    **Omdat het beter is:**
-    - Eenvoudige uitleg voor complexe onderwerpen
-    - Persoonlijke voorkeuren worden gerespecteerd
-    - Geen informatie-overload, alleen wat jij wilt zien
-    """)
+    """Render 'Achtergrond' page."""
+    st.title("Achtergrond")
+    st.markdown("tbd")
 
 
 def render_frustrate_page():
@@ -1432,7 +1448,7 @@ def render_statistics_page():
     """Render statistics page with article counts, ELI5 summaries, categories, and user count."""
     supabase = st.session_state.supabase
     
-    st.title("📊 Statistics")
+    st.title("📊 Statistieken")
     st.markdown("---")
     
     # Always using Supabase now
@@ -1574,6 +1590,99 @@ def render_statistics_page():
                 st.bar_chart(df.set_index('Categorie'))
         except Exception as e:
             st.error(f"Fout bij ophalen lokale statistieken: {str(e)}")
+
+
+def render_admin_page():
+    """Render admin page with all users and their reading statistics."""
+    supabase = st.session_state.supabase
+    
+    st.title("🔐 Admin Dashboard")
+    st.caption("💡 Tip: Toegankelijk via [jouw-url]?page=Admin")
+    st.markdown("---")
+    
+    # Check if user is logged in
+    if not st.session_state.user:
+        st.warning("⚠️ Je moet ingelogd zijn om de admin pagina te bekijken.")
+        return
+    
+    st.subheader("📊 Gebruikers en Leesstatistieken")
+    
+    # Refresh button
+    if st.button("🔄 Vernieuw Data", use_container_width=True):
+        st.rerun()
+    
+    try:
+        # Try to get all users (including those without activity)
+        users_data = supabase.get_all_users_with_reading_stats_via_activity()
+        
+        if not users_data:
+            st.warning("⚠️ Geen gebruikers gevonden. Controleer of de database functie correct is uitgevoerd.")
+            st.info("💡 Tip: Voer het SQL script `admin_get_user_emails.sql` uit in Supabase om alle gebruikers te zien.")
+            return
+        
+        # Create DataFrame for better display
+        import pandas as pd
+        
+        # Prepare data for table
+        table_data = []
+        for user in users_data:
+            table_data.append({
+                'Gebruiker ID': user['user_id'][:8] + '...' if len(user['user_id']) > 8 else user['user_id'],
+                'Email': user['email'],
+                'Artikelen Geopend': user['total_articles_opened'],
+                'Artikelen Gelezen': user['total_articles_read'],
+                'Gem. Leesduur (sec)': round(user['avg_read_duration_seconds'], 1) if user['avg_read_duration_seconds'] > 0 else 0,
+                'Leespercentage': f"{user['read_percentage']:.1f}%" if user['read_percentage'] > 0 else "0%"
+            })
+        
+        df = pd.DataFrame(table_data)
+        
+        # Display summary metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Totaal Gebruikers", len(users_data))
+        with col2:
+            total_read = sum(u['total_articles_read'] for u in users_data)
+            st.metric("Totaal Gelezen", total_read)
+        with col3:
+            total_opened = sum(u['total_articles_opened'] for u in users_data)
+            st.metric("Totaal Geopend", total_opened)
+        with col4:
+            avg_read_per_user = total_read / len(users_data) if users_data else 0
+            st.metric("Gem. Gelezen/User", f"{avg_read_per_user:.1f}")
+        
+        st.markdown("---")
+        
+        # Display table
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Gebruiker ID": st.column_config.TextColumn("Gebruiker ID", width="small"),
+                "Email": st.column_config.TextColumn("Email", width="medium"),
+                "Artikelen Geopend": st.column_config.NumberColumn("Geopend", width="small"),
+                "Artikelen Gelezen": st.column_config.NumberColumn("Gelezen", width="small"),
+                "Gem. Leesduur (sec)": st.column_config.NumberColumn("Leesduur", width="small"),
+                "Leespercentage": st.column_config.TextColumn("Lees%", width="small")
+            }
+        )
+        
+        # Download button
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download als CSV",
+            data=csv,
+            file_name=f"users_reading_stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+        
+    except Exception as e:
+        st.error(f"❌ Fout bij ophalen gebruikersdata: {str(e)}")
+        import traceback
+        with st.expander("🔍 Technische Details"):
+            st.code(traceback.format_exc())
 
 
 def render_gebruiker_page():
@@ -1812,6 +1921,8 @@ def main():
         render_statistics_page()
     elif page == "Gebruiker":
         render_gebruiker_page()
+    elif page == "Admin":
+        render_admin_page()
 
 
 if __name__ == "__main__":

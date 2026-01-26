@@ -227,9 +227,22 @@ class SupabaseClient:
         search_query: Optional[str] = None,
         blacklist_keywords: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        """Get articles from Supabase with optional filters."""
+        """
+        Get articles from Supabase with optional filters.
+        Only returns articles published in the last 72 hours.
+        """
         try:
+            from datetime import datetime, timedelta
+            import pytz
+            
+            # Calculate 72 hours ago
+            cutoff_date = datetime.now(pytz.UTC) - timedelta(hours=72)
+            cutoff_date_str = cutoff_date.isoformat()
+            
             query = self.client.table('articles').select('*')
+            
+            # Only get articles from the last 72 hours
+            query = query.gte('published_at', cutoff_date_str)
             
             if category:
                 query = query.eq('category', category)
@@ -352,9 +365,23 @@ class SupabaseClient:
             return False
     
     def get_articles_without_eli5(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get articles that don't have ELI5 summaries yet."""
+        """Get articles that don't have ELI5 summaries yet. Only returns articles from the last 72 hours."""
         try:
-            response = self.client.table('articles').select('*').is_('eli5_summary_nl', 'null').limit(limit).execute()
+            from datetime import datetime, timedelta
+            import pytz
+            
+            # Calculate 72 hours ago
+            cutoff_date = datetime.now(pytz.UTC) - timedelta(hours=72)
+            cutoff_date_str = cutoff_date.isoformat()
+            
+            query = self.client.table('articles').select('*')
+            # Only get articles from the last 72 hours
+            query = query.gte('published_at', cutoff_date_str)
+            # Only get articles without ELI5
+            query = query.is_('eli5_summary_nl', 'null')
+            query = query.limit(limit)
+            
+            response = query.execute()
             return response.data if response.data else []
         except Exception:
             return []
@@ -430,12 +457,13 @@ class SupabaseClient:
             print(f"Error in get_user_count: {e}")
             return -1
     
-    def delete_old_articles(self, days_old: int = 7) -> Dict[str, Any]:
+    def delete_old_articles(self, days_old: int = None, hours_old: int = None) -> Dict[str, Any]:
         """
-        Delete articles older than specified number of days.
+        Delete articles older than specified number of days or hours.
         
         Args:
-            days_old: Number of days old (default: 7 for 1 week)
+            days_old: Number of days old (deprecated, use hours_old instead)
+            hours_old: Number of hours old (default: 72 hours = 3 days)
         
         Returns:
             Dict with count of deleted articles and any errors
@@ -444,11 +472,18 @@ class SupabaseClient:
             from datetime import datetime, timedelta
             import pytz
             
+            # Default to 72 hours if not specified
+            if hours_old is None:
+                if days_old is not None:
+                    hours_old = days_old * 24
+                else:
+                    hours_old = 72  # Default: 72 hours
+            
             # Calculate cutoff date (articles older than this will be deleted)
-            cutoff_date = datetime.now(pytz.UTC) - timedelta(days=days_old)
+            cutoff_date = datetime.now(pytz.UTC) - timedelta(hours=hours_old)
             cutoff_date_str = cutoff_date.isoformat()
             
-            print(f"[Delete Old Articles] Deleting articles older than {days_old} days (before {cutoff_date_str})")
+            print(f"[Delete Old Articles] Deleting articles older than {hours_old} hours (before {cutoff_date_str})")
             
             # First, get count of articles to be deleted (for logging)
             try:
@@ -459,7 +494,7 @@ class SupabaseClient:
                 count = 0
             
             if count == 0:
-                print(f"[Delete Old Articles] No articles older than {days_old} days found")
+                print(f"[Delete Old Articles] No articles older than {hours_old} hours found")
                 return {
                     'success': True,
                     'deleted_count': 0,
@@ -502,18 +537,25 @@ class SupabaseClient:
             }
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Get statistics about articles and ELI5 summaries."""
+        """Get statistics about articles and ELI5 summaries. Only includes articles from the last 72 hours."""
         try:
-            # Get total article count
-            articles_response = self.client.table('articles').select('id', count='exact').execute()
+            from datetime import datetime, timedelta
+            import pytz
+            
+            # Calculate 72 hours ago
+            cutoff_date = datetime.now(pytz.UTC) - timedelta(hours=72)
+            cutoff_date_str = cutoff_date.isoformat()
+            
+            # Get total article count (last 72 hours only)
+            articles_response = self.client.table('articles').select('id', count='exact').gte('published_at', cutoff_date_str).execute()
             total_articles = articles_response.count if hasattr(articles_response, 'count') else len(articles_response.data) if articles_response.data else 0
             
-            # Get articles with ELI5
-            eli5_response = self.client.table('articles').select('id', count='exact').not_.is_('eli5_summary_nl', 'null').execute()
+            # Get articles with ELI5 (last 72 hours only)
+            eli5_response = self.client.table('articles').select('id', count='exact').gte('published_at', cutoff_date_str).not_.is_('eli5_summary_nl', 'null').execute()
             articles_with_eli5 = eli5_response.count if hasattr(eli5_response, 'count') else len(eli5_response.data) if eli5_response.data else 0
             
-            # Get all articles with categories
-            all_articles_response = self.client.table('articles').select('categories, categorization_llm').execute()
+            # Get all articles with categories (last 72 hours only)
+            all_articles_response = self.client.table('articles').select('categories, categorization_llm').gte('published_at', cutoff_date_str).execute()
             articles = all_articles_response.data if all_articles_response.data else []
             
             # Count categories
@@ -545,6 +587,403 @@ class SupabaseClient:
                 'articles_without_eli5': 0,
                 'category_counts': {}
             }
+    
+    # Reading activity methods
+    def track_article_opened(self, user_id: str, article_id: str) -> bool:
+        """
+        Track when a user opens an article.
+        Creates a new record or updates last_viewed_at if record already exists.
+        
+        Args:
+            user_id: The user's ID
+            article_id: The article's ID
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from datetime import datetime
+            import pytz
+            
+            now = datetime.now(pytz.UTC).isoformat()
+            
+            # Check if record already exists
+            existing = self.client.table('reading_activity').select('id, opened_at').eq('user_id', user_id).eq('article_id', article_id).execute()
+            
+            if existing.data and len(existing.data) > 0:
+                # Update existing record
+                self.client.table('reading_activity').update({
+                    'last_viewed_at': now,
+                    'updated_at': now
+                }).eq('user_id', user_id).eq('article_id', article_id).execute()
+            else:
+                # Insert new record
+                self.client.table('reading_activity').insert({
+                    'user_id': user_id,
+                    'article_id': article_id,
+                    'opened_at': now,
+                    'last_viewed_at': now
+                }).execute()
+            
+            return True
+        except Exception as e:
+            print(f"Error tracking article opened: {e}")
+            return False
+    
+    def mark_article_as_read(self, user_id: str, article_id: str, read_duration_seconds: int = None) -> bool:
+        """
+        Mark an article as read by a user.
+        
+        Args:
+            user_id: The user's ID
+            article_id: The article's ID
+            read_duration_seconds: Optional duration in seconds the user spent reading
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from datetime import datetime
+            import pytz
+            
+            now = datetime.now(pytz.UTC).isoformat()
+            
+            update_data = {
+                'is_read': True,
+                'last_viewed_at': now,
+                'updated_at': now
+            }
+            
+            if read_duration_seconds is not None:
+                update_data['read_duration_seconds'] = read_duration_seconds
+            
+            # First ensure the record exists (track as opened if not)
+            self.track_article_opened(user_id, article_id)
+            
+            # Then update to mark as read
+            self.client.table('reading_activity').update(update_data).eq('user_id', user_id).eq('article_id', article_id).execute()
+            
+            return True
+        except Exception as e:
+            print(f"Error marking article as read: {e}")
+            return False
+    
+    def get_user_reading_activity(self, user_id: str, limit: int = 50, only_read: bool = False) -> List[Dict[str, Any]]:
+        """
+        Get reading activity for a user.
+        
+        Args:
+            user_id: The user's ID
+            limit: Maximum number of records to return
+            only_read: If True, only return articles marked as read
+            
+        Returns:
+            List of reading activity records
+        """
+        try:
+            query = self.client.table('reading_activity').select('*').eq('user_id', user_id)
+            
+            if only_read:
+                query = query.eq('is_read', True)
+            
+            query = query.order('last_viewed_at', desc=True).limit(limit)
+            
+            response = query.execute()
+            return response.data if response.data else []
+        except Exception as e:
+            print(f"Error getting reading activity: {e}")
+            return []
+    
+    def get_user_read_articles(self, user_id: str, limit: int = 50) -> List[str]:
+        """
+        Get list of article IDs that a user has read.
+        
+        Args:
+            user_id: The user's ID
+            limit: Maximum number of article IDs to return
+            
+        Returns:
+            List of article IDs
+        """
+        try:
+            activity = self.get_user_reading_activity(user_id, limit=limit, only_read=True)
+            return [record['article_id'] for record in activity]
+        except Exception as e:
+            print(f"Error getting read articles: {e}")
+            return []
+    
+    def get_user_opened_articles(self, user_id: str, limit: int = 50) -> List[str]:
+        """
+        Get list of article IDs that a user has opened (read or not).
+        
+        Args:
+            user_id: The user's ID
+            limit: Maximum number of article IDs to return
+            
+        Returns:
+            List of article IDs
+        """
+        try:
+            activity = self.get_user_reading_activity(user_id, limit=limit, only_read=False)
+            return [record['article_id'] for record in activity]
+        except Exception as e:
+            print(f"Error getting opened articles: {e}")
+            return []
+    
+    def is_article_read_by_user(self, user_id: str, article_id: str) -> bool:
+        """
+        Check if a specific article has been read by a user.
+        
+        Args:
+            user_id: The user's ID
+            article_id: The article's ID
+            
+        Returns:
+            True if article is read, False otherwise
+        """
+        try:
+            response = self.client.table('reading_activity').select('is_read').eq('user_id', user_id).eq('article_id', article_id).execute()
+            if response.data and len(response.data) > 0:
+                return response.data[0].get('is_read', False)
+            return False
+        except Exception as e:
+            print(f"Error checking if article is read: {e}")
+            return False
+    
+    def get_reading_statistics(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get reading statistics for a user.
+        
+        Args:
+            user_id: The user's ID
+            
+        Returns:
+            Dictionary with reading statistics
+        """
+        try:
+            # Get all reading activity for user
+            all_activity = self.get_user_reading_activity(user_id, limit=1000)
+            
+            total_opened = len(all_activity)
+            total_read = sum(1 for record in all_activity if record.get('is_read', False))
+            
+            # Calculate average read duration
+            read_records = [r for r in all_activity if r.get('is_read', False) and r.get('read_duration_seconds')]
+            avg_duration = sum(r['read_duration_seconds'] for r in read_records) / len(read_records) if read_records else 0
+            
+            return {
+                'total_articles_opened': total_opened,
+                'total_articles_read': total_read,
+                'avg_read_duration_seconds': avg_duration,
+                'read_percentage': (total_read / total_opened * 100) if total_opened > 0 else 0
+            }
+        except Exception as e:
+            print(f"Error getting reading statistics: {e}")
+            return {
+                'total_articles_opened': 0,
+                'total_articles_read': 0,
+                'avg_read_duration_seconds': 0,
+                'read_percentage': 0
+            }
+    
+    def get_all_users_with_reading_stats(self) -> List[Dict[str, Any]]:
+        """
+        Get all registered users with their reading statistics.
+        This is an admin function that requires proper permissions.
+        Uses database function if available, otherwise falls back to manual query.
+        
+        Returns:
+            List of dictionaries with user info and reading statistics
+        """
+        try:
+            # First try to use the database function (most efficient and includes emails)
+            try:
+                response = self.client.rpc('get_all_users_with_reading_stats').execute()
+                if response.data:
+                    # Convert database function results to our format
+                    users_with_stats = []
+                    for record in response.data:
+                        users_with_stats.append({
+                            'user_id': record.get('user_id'),
+                            'email': record.get('email', 'Onbekend'),
+                            'total_articles_opened': record.get('total_articles_opened', 0),
+                            'total_articles_read': record.get('total_articles_read', 0),
+                            'avg_read_duration_seconds': float(record.get('avg_read_duration_seconds', 0)) if record.get('avg_read_duration_seconds') else 0,
+                            'read_percentage': float(record.get('read_percentage', 0)) if record.get('read_percentage') else 0
+                        })
+                    return users_with_stats
+            except Exception as e:
+                print(f"Database function not available, using fallback method: {e}")
+                # Fall through to manual method
+            
+            # Fallback: Manual method
+            # Note: Without the database function, we can only get users who have preferences or activity
+            # This is a limitation - to get ALL users, you need to run the SQL function
+            
+            # Get users from user_preferences (users who have logged in at least once)
+            user_ids_from_prefs = []
+            try:
+                prefs_response = self.client.table('user_preferences').select('user_id').execute()
+                if prefs_response.data:
+                    user_ids_from_prefs = [pref['user_id'] for pref in prefs_response.data if pref.get('user_id')]
+            except Exception as e:
+                print(f"Could not get users from preferences: {e}")
+            
+            # Get users from reading_activity
+            user_ids_from_activity = []
+            try:
+                activity_response = self.client.table('reading_activity').select('user_id').execute()
+                if activity_response.data:
+                    user_ids_from_activity = [record['user_id'] for record in activity_response.data if record.get('user_id')]
+            except Exception as e:
+                print(f"Could not get users from reading_activity: {e}")
+            
+            # Combine and get unique user IDs
+            all_user_ids = list(set(user_ids_from_prefs + user_ids_from_activity))
+            
+            if not all_user_ids:
+                print("No users found in preferences or reading_activity. Database function required to get all users.")
+                return []
+            
+            # Try to get emails via RPC function
+            user_emails_map = {}
+            try:
+                # Try to get emails using the get_user_emails function
+                emails_response = self.client.rpc('get_user_emails', {'user_ids': all_user_ids}).execute()
+                if emails_response.data:
+                    for record in emails_response.data:
+                        user_emails_map[record.get('user_id')] = record.get('email', 'Onbekend')
+            except Exception as e:
+                print(f"Could not get emails via RPC function: {e}")
+                # Continue without emails
+            
+            # For each user, get their email and reading statistics
+            users_with_stats = []
+            
+            for user_id in all_user_ids:
+                try:
+                    # Get reading statistics
+                    stats = self.get_reading_statistics(user_id)
+                    
+                    # Get email from map or use fallback
+                    user_email = user_emails_map.get(user_id, f"User {user_id[:8]}...")
+                    
+                    users_with_stats.append({
+                        'user_id': user_id,
+                        'email': user_email,
+                        'total_articles_opened': stats.get('total_articles_opened', 0),
+                        'total_articles_read': stats.get('total_articles_read', 0),
+                        'avg_read_duration_seconds': stats.get('avg_read_duration_seconds', 0),
+                        'read_percentage': stats.get('read_percentage', 0)
+                    })
+                except Exception as e:
+                    print(f"Error getting stats for user {user_id}: {e}")
+                    continue
+            
+            # Sort by total_articles_read (descending)
+            users_with_stats.sort(key=lambda x: x['total_articles_read'], reverse=True)
+            
+            return users_with_stats
+        except Exception as e:
+            print(f"Error getting all users with reading stats: {e}")
+            return []
+    
+    def get_all_users_with_reading_stats_via_activity(self) -> List[Dict[str, Any]]:
+        """
+        Alternative method: Get all users from reading_activity table.
+        This is more efficient if reading_activity table exists.
+        Uses database function if available, otherwise falls back to manual query.
+        
+        Returns:
+            List of dictionaries with user info and reading statistics
+        """
+        try:
+            # First try to use the database function (most efficient and includes emails)
+            try:
+                response = self.client.rpc('get_all_users_with_reading_stats').execute()
+                if response.data:
+                    # Convert database function results to our format
+                    users_with_stats = []
+                    for record in response.data:
+                        users_with_stats.append({
+                            'user_id': record.get('user_id'),
+                            'email': record.get('email', 'Onbekend'),
+                            'total_articles_opened': record.get('total_articles_opened', 0),
+                            'total_articles_read': record.get('total_articles_read', 0),
+                            'avg_read_duration_seconds': float(record.get('avg_read_duration_seconds', 0)) if record.get('avg_read_duration_seconds') else 0,
+                            'read_percentage': float(record.get('read_percentage', 0)) if record.get('read_percentage') else 0
+                        })
+                    return users_with_stats
+            except Exception as e:
+                print(f"Database function not available, using fallback method: {e}")
+                # Fall through to manual method
+            
+            # Fallback: Manual method with email lookup
+            # Get all unique user_ids from reading_activity
+            response = self.client.table('reading_activity').select('user_id').execute()
+            
+            if not response.data:
+                # If no reading activity, try to get users from user_preferences
+                return self.get_all_users_with_reading_stats()
+            
+            # Get unique user IDs
+            user_ids = list(set([record['user_id'] for record in response.data if record.get('user_id')]))
+            
+            # Also get users from user_preferences who might not have reading activity yet
+            try:
+                prefs_response = self.client.table('user_preferences').select('user_id').execute()
+                if prefs_response.data:
+                    pref_user_ids = [pref['user_id'] for pref in prefs_response.data if pref.get('user_id')]
+                    # Add users from preferences who aren't in reading_activity yet
+                    for pref_user_id in pref_user_ids:
+                        if pref_user_id not in user_ids:
+                            user_ids.append(pref_user_id)
+            except:
+                pass
+            
+            # Try to get emails via RPC function
+            user_emails_map = {}
+            try:
+                # Try to get emails using the get_user_emails function
+                emails_response = self.client.rpc('get_user_emails', {'user_ids': user_ids}).execute()
+                if emails_response.data:
+                    for record in emails_response.data:
+                        user_emails_map[record.get('user_id')] = record.get('email', 'Onbekend')
+            except Exception as e:
+                print(f"Could not get emails via RPC function: {e}")
+                # Continue without emails
+            
+            # For each user, get their reading statistics
+            users_with_stats = []
+            
+            for user_id in user_ids:
+                try:
+                    # Get reading statistics
+                    stats = self.get_reading_statistics(user_id)
+                    
+                    # Get email from map or use fallback
+                    user_email = user_emails_map.get(user_id, f"user_{user_id[:8]}")
+                    
+                    users_with_stats.append({
+                        'user_id': user_id,
+                        'email': user_email,
+                        'total_articles_opened': stats.get('total_articles_opened', 0),
+                        'total_articles_read': stats.get('total_articles_read', 0),
+                        'avg_read_duration_seconds': stats.get('avg_read_duration_seconds', 0),
+                        'read_percentage': stats.get('read_percentage', 0)
+                    })
+                except Exception as e:
+                    print(f"Error getting stats for user {user_id}: {e}")
+                    continue
+            
+            # Sort by total_articles_read (descending)
+            users_with_stats.sort(key=lambda x: x['total_articles_read'], reverse=True)
+            
+            return users_with_stats
+        except Exception as e:
+            print(f"Error getting all users with reading stats via activity: {e}")
+            # Fallback to the other method
+            return self.get_all_users_with_reading_stats()
 
 
 # Global instance (will be initialized when needed)

@@ -49,40 +49,122 @@ def generate_eli5_summary_nl_with_llm(article_text: str, title: str = "") -> Opt
         def get_secret(key, default=None):
             return os.getenv(key, default)
     
-    # Option 1: Hugging Face Inference API (free tier, reliable)
-    hf_api_key = get_secret('HUGGINGFACE_API_KEY')
-    if hf_api_key:
-        summary = _generate_with_huggingface(article_text, title, hf_api_key)
-        if summary:
-            return {'summary': summary, 'llm': 'HuggingFace'}
-    
-    # Option 2: Groq API (free tier with API key, fast)
+    # Option 1: Groq API (first priority)
     groq_api_key = get_secret('GROQ_API_KEY')
     if groq_api_key:
         summary = _generate_with_groq(article_text, title, groq_api_key)
         if summary:
             return {'summary': summary, 'llm': 'Groq'}
     
-    # Option 3: OpenAI-compatible API (e.g., Together AI, OpenRouter free models)
-    openai_api_key = get_secret('OPENAI_API_KEY')
-    openai_base_url = get_secret('OPENAI_BASE_URL', 'https://api.openai.com/v1')
-    if openai_api_key:
-        summary = _generate_with_openai_compatible(article_text, title, openai_api_key, openai_base_url)
+    # Option 2: RouteLLM API (second priority)
+    routellm_api_key = get_secret('ROUTELLM_API_KEY')
+    if routellm_api_key:
+        summary = _generate_with_routellm(article_text, title, routellm_api_key)
         if summary:
-            return {'summary': summary, 'llm': 'OpenAI'}
+            return {'summary': summary, 'llm': 'RouteLLM'}
     
-    # Option 4: ChatLLM API (Aitomatic) - currently not working
-    chatllm_api_key = get_secret('CHATLLM_API_KEY')
-    if chatllm_api_key:
-        summary = _generate_with_chatllm(article_text, title, chatllm_api_key)
-        if summary:
-            return {'summary': summary, 'llm': 'ChatLLM'}
-    
-    # Option 5: Fallback to simple extraction if no API available
-    summary = _simple_extract_summary(article_text)
-    if summary:
-        return {'summary': summary, 'llm': 'Simple'}
-    return None
+    # If both Groq and RouteLLM fail, return "failed LLM"
+    return {'summary': 'failed LLM', 'llm': 'Failed'}
+
+
+def _generate_with_routellm(text: str, title: str, api_key: str) -> Optional[str]:
+    """Generate ELI5 summary using RouteLLM API with improved prompt."""
+    if requests is None:
+        return None
+    try:
+        import json
+        
+        # New improved prompt
+        prompt = f"""Je bent een expert in het uitleggen van complexe onderwerpen op een begrijpelijke manier. 
+Maak een ELI5-samenvatting van het volgende nieuwsartikel in maximaal 5 regels.
+
+Richtlijnen:
+- Schrijf in een speelse, vriendschappelijke toon die geschikt is voor volwassenen en tieners
+- Houd het verhaal vloeiend en natuurlijk, niet als bullet points
+- Gebruik eenvoudige woorden en korte zinnen
+- Als je complexe termen gebruikt die echt nodig zijn voor begrip (bijv. inflatie, algoritme), geef dan direct een korte uitleg in haakjes (geld wordt minder waard)
+- Bekende termen zoals "staakt-het-vuren", "coalitie", "kabinet", "gijzelaar" hoef je NIET uit te leggen - deze zijn al duidelijk genoeg
+- Te complexe termen die niet essentieel zijn voor het verhaal (zoals "bemiddelaars", "stabilisatiemacht", "internationale bemiddeling") kun je weglaten of vervangen door eenvoudigere alternatieven
+- Focus op het hoofdverhaal, niet op alle details en technische termen
+- Voeg algemene context toe als dat helpt om het onderwerp beter te begrijpen
+- Zorg dat iemand zonder voorkennis het volledig snapt
+- Geef alleen de samenvatting terug, geen extra commentaar
+
+Titel: {title}
+
+Artikel:
+{text[:3000]}
+
+ELI5 Samenvatting:"""
+        
+        url = "https://routellm.abacus.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Try different models that RouteLLM might support
+        models_to_try = ["gpt-5", "gpt-4", "gpt-3.5-turbo", "gpt-4o", "gpt-4-turbo"]
+        
+        for model in models_to_try:
+            try:
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "Je bent een expert in het uitleggen van complexe onderwerpen op een begrijpelijke manier. Je schrijft in een speelse, vriendschappelijke toon die geschikt is voor volwassenen en tieners."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    "max_tokens": 300,
+                    "temperature": 0.7,
+                    "stream": False
+                }
+                
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    data=json.dumps(payload),
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if result and 'choices' in result and len(result['choices']) > 0:
+                        summary = result['choices'][0].get('message', {}).get('content', '').strip()
+                        if summary:
+                            # Clean up the summary (remove any extra formatting)
+                            summary = summary.strip()
+                            # Remove common prefixes that LLMs sometimes add
+                            prefixes = ["ELI5 Samenvatting:", "Samenvatting:", "ELI5:", "Samenvatting"]
+                            for prefix in prefixes:
+                                if summary.startswith(prefix):
+                                    summary = summary[len(prefix):].strip()
+                            return summary
+                elif response.status_code == 400:
+                    # Model might not be available, try next
+                    continue
+                elif response.status_code == 401:
+                    print(f"[RouteLLM ELI5] Authentication error - check API key")
+                    return None
+                else:
+                    # Log error but try next model
+                    continue
+                    
+            except requests.exceptions.RequestException:
+                continue
+            except Exception as e:
+                print(f"[RouteLLM ELI5] Error for model {model}: {e}")
+                continue
+        
+        return None
+    except Exception as e:
+        print(f"RouteLLM ELI5 generation error: {e}")
+        return None
 
 
 def _generate_with_chatllm(text: str, title: str, api_key: str) -> Optional[str]:
@@ -272,7 +354,7 @@ Samenvatting (heel simpel, 2-3 zinnen):"""
 
 
 def _generate_with_groq(text: str, title: str, api_key: str, timeout: int = 30) -> Optional[str]:
-    """Generate summary using Groq API (fast and free tier available)."""
+    """Generate ELI5 summary using Groq API with improved prompt."""
     try:
         import groq
         from functools import wraps
@@ -280,22 +362,35 @@ def _generate_with_groq(text: str, title: str, api_key: str, timeout: int = 30) 
         
         client = groq.Groq(api_key=api_key, timeout=timeout)
         
-        prompt = f"""Leg dit nieuwsartikel uit alsof ik 5 jaar ben. Gebruik heel eenvoudige Nederlandse woorden die een 5-jarige begrijpt. Gebruik korte zinnen (2-3 zinnen).
+        # Use the improved prompt
+        prompt = f"""Je bent een expert in het uitleggen van complexe onderwerpen op een begrijpelijke manier. 
+Maak een ELI5-samenvatting van het volgende nieuwsartikel in maximaal 5 regels.
 
-BELANGRIJK: Als je namen of woorden met een hoofdletter gebruikt (zoals Mark Rutte, Pornhub, of bedrijfsnamen), leg dan in een paar simpele woorden uit wat dat is. Bijvoorbeeld: "Mark Rutte (dat is de baas van Nederland)" of "Pornhub (dat is een website)". Landen zoals Nederland, Frankrijk, Duitsland hoef je niet uit te leggen.
+Richtlijnen:
+- Schrijf in een speelse, vriendschappelijke toon die geschikt is voor volwassenen en tieners
+- Houd het verhaal vloeiend en natuurlijk, niet als bullet points
+- Gebruik eenvoudige woorden en korte zinnen
+- Als je complexe termen gebruikt die echt nodig zijn voor begrip (bijv. inflatie, algoritme), geef dan direct een korte uitleg in haakjes (geld wordt minder waard)
+- Bekende termen zoals "staakt-het-vuren", "coalitie", "kabinet", "gijzelaar" hoef je NIET uit te leggen - deze zijn al duidelijk genoeg
+- Te complexe termen die niet essentieel zijn voor het verhaal (zoals "bemiddelaars", "stabilisatiemacht", "internationale bemiddeling") kun je weglaten of vervangen door eenvoudigere alternatieven
+- Focus op het hoofdverhaal, niet op alle details en technische termen
+- Voeg algemene context toe als dat helpt om het onderwerp beter te begrijpen
+- Zorg dat iemand zonder voorkennis het volledig snapt
+- Geef alleen de samenvatting terug, geen extra commentaar
 
 Titel: {title}
 
-Inhoud: {text[:2000]}
+Artikel:
+{text[:3000]}
 
-Samenvatting:"""
+ELI5 Samenvatting:"""
         
         try:
             chat_completion = client.chat.completions.create(
                 messages=[
                     {
                         "role": "system",
-                        "content": "Je bent een vriendelijke assistent die nieuwsartikelen uitlegt aan kinderen van 5 jaar oud. Gebruik altijd heel eenvoudige Nederlandse woorden en korte zinnen. Leg namen en bedrijfsnamen met een hoofdletter uit in simpele woorden (behalve bekende landen zoals Nederland, Frankrijk)."
+                        "content": "Je bent een expert in het uitleggen van complexe onderwerpen op een begrijpelijke manier. Je schrijft in een speelse, vriendschappelijke toon die geschikt is voor volwassenen en tieners."
                     },
                     {
                         "role": "user",
@@ -304,7 +399,7 @@ Samenvatting:"""
                 ],
                 model="llama-3.1-8b-instant",  # Free fast model
                 temperature=0.7,
-                max_tokens=150,
+                max_tokens=300,
                 timeout=timeout
             )
             

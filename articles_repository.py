@@ -44,7 +44,7 @@ def generate_stable_id(link: str, published_at: Optional[datetime] = None) -> st
     return hashlib.md5(stable_string.encode()).hexdigest()
 
 
-def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = False) -> Dict[str, Any]:
+def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True, rss_feed_url: str = None) -> Dict[str, Any]:
     """Parse a feedparser entry into article data structure."""
     # Extract published date
     published_at = None
@@ -99,36 +99,74 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = False
     description = entry.get('description') or entry.get('summary', '')[:2000]
     content = entry.get('content', [{}])[0].get('value', '')[:10000] if entry.get('content') else None
     
-    # Categorize article - use fast keyword matching by default, LLM only if requested
+    # Categorize article - ALWAYS use LLM categorization (RouteLLM preferred)
     # NOTE: This categorization will only be used for NEW articles.
     # Existing articles will preserve their existing LLM categorization (see fetch_and_upsert_articles)
     if use_llm_categorization:
         try:
-            # Use LLM categorization (slower, but more accurate)
+            # Use LLM categorization (RouteLLM preferred, falls back to other LLMs if needed)
             # Only do this for NEW articles - existing articles will preserve their categorization
-            categorization_result = categorize_article(title, description, content or '')
+            categorization_result = categorize_article(title, description, content or '', rss_feed_url=rss_feed_url)
             if isinstance(categorization_result, dict):
                 categories = categorization_result.get('categories', [])
-                categorization_llm = categorization_result.get('llm', 'Keywords')
+                main_category = categorization_result.get('main_category')
+                sub_categories = categorization_result.get('sub_categories', [])
+                categorization_argumentation = categorization_result.get('categorization_argumentation', '')
+                categorization_llm = categorization_result.get('llm', 'Unknown')
+                
+                # If LLM returned 'Keywords' or 'LLM-Failed', log a warning
+                if categorization_llm in ['Keywords', 'LLM-Failed']:
+                    print(f"[WARN] LLM categorization returned {categorization_llm} - this should not happen if RouteLLM is configured")
             else:
                 # Backward compatibility
                 categories = categorization_result if isinstance(categorization_result, list) else []
-                categorization_llm = 'Keywords'
+                main_category = categories[0] if categories else None
+                sub_categories = categories[1:] if len(categories) > 1 else []
+                categorization_argumentation = ''
+                categorization_llm = 'Unknown'
+                
+            # Ensure we have at least one category
+            if not categories or len(categories) == 0:
+                print(f"[WARN] No categories from LLM, using default 'Algemeen'")
+                categories = ['Algemeen']
+                main_category = 'Algemeen'
+                sub_categories = []
+                categorization_argumentation = 'LLM categorisatie faalde - standaard categorie gebruikt'
+                categorization_llm = 'LLM-Failed'
         except Exception as e:
-            print(f"LLM categorization failed, using keywords: {e}")
-            from categorization_engine import _categorize_with_keywords
-            categories = _categorize_with_keywords(title, description, content or '')
-            categorization_llm = 'Keywords'
-    else:
-        # Use fast keyword matching (non-blocking)
+            print(f"[ERROR] LLM categorization failed completely: {e}")
+            # Use default category, no keyword fallback
+            categories = ['Algemeen']
+            main_category = 'Algemeen'
+            sub_categories = []
+            categorization_argumentation = f'LLM categorisatie faalde - fout: {str(e)}'
+            categorization_llm = 'LLM-Failed'
+    
+    # ALWAYS use LLM categorization - no keyword fallback
+    # If use_llm_categorization is False, we still try LLM (but log a warning)
+    if not use_llm_categorization:
+        print(f"[WARN] use_llm_categorization=False but LLM categorization is required. Using LLM anyway.")
         try:
-            from categorization_engine import _categorize_with_keywords
-            categories = _categorize_with_keywords(title, description, content or '')
-            categorization_llm = 'Keywords'
-        except Exception:
-            # Fallback to simple category
-            categories = [category] if category else []
-            categorization_llm = 'Keywords'
+            categorization_result = categorize_article(title, description, content or '', rss_feed_url=rss_feed_url)
+            if isinstance(categorization_result, dict):
+                categories = categorization_result.get('categories', ['Algemeen'])
+                main_category = categorization_result.get('main_category', 'Algemeen')
+                sub_categories = categorization_result.get('sub_categories', [])
+                categorization_argumentation = categorization_result.get('categorization_argumentation', '')
+                categorization_llm = categorization_result.get('llm', 'LLM-Failed')
+            else:
+                categories = ['Algemeen']
+                main_category = 'Algemeen'
+                sub_categories = []
+                categorization_argumentation = ''
+                categorization_llm = 'LLM-Failed'
+        except Exception as e:
+            print(f"[ERROR] LLM categorization failed: {e}")
+            categories = ['Algemeen']
+            main_category = 'Algemeen'
+            sub_categories = []
+            categorization_argumentation = f'LLM categorisatie faalde: {str(e)}'
+            categorization_llm = 'LLM-Failed'
     
     return {
         'stable_id': stable_id,
@@ -141,27 +179,44 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = False
         'image_url': image_url[:1000] if image_url else None,
         'category': category,  # Legacy single category
         'categories': categories,  # New: multiple categories
+        'main_category': main_category,  # Main category
+        'sub_categories': sub_categories,  # Sub categories
+        'categorization_argumentation': categorization_argumentation,  # Argumentation
         'categorization_llm': categorization_llm,  # Which LLM was used for categorization
+        'rss_feed_url': rss_feed_url,  # RSS feed URL where article came from
         'eli5_summary_nl': None,  # Will be generated later
         'created_at': datetime.utcnow().isoformat(),
         'updated_at': datetime.utcnow().isoformat()
     }
 
 
-def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, use_llm_categorization: bool = False) -> Dict[str, Any]:
+def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, use_llm_categorization: bool = True) -> Dict[str, Any]:
     """
     Fetch articles from RSS feed and upsert them to storage (Supabase or local).
+    Also removes articles older than 72 hours.
     
     Args:
         feed_url: URL of the RSS feed
         max_items: Maximum number of items to process
-        use_llm_categorization: If True, use LLM for categorization (slower). 
-                                If False, use fast keyword matching (default).
+        use_llm_categorization: If True, use LLM for categorization (default: True).
+                                If False, use fast keyword matching (not recommended).
     
     Returns:
         Dict with counts of fetched, inserted, updated, skipped
     """
     storage = get_supabase_client()  # Returns Supabase or LocalStorage
+    
+    # Cleanup old articles (older than 72 hours) before processing new ones
+    from supabase_client import SupabaseClient
+    if isinstance(storage, SupabaseClient):
+        try:
+            cleanup_result = storage.delete_old_articles(hours_old=72)
+            if cleanup_result.get('success'):
+                deleted_count = cleanup_result.get('deleted_count', 0)
+                if deleted_count > 0:
+                    print(f"[RSS Feed] Cleaned up {deleted_count} articles older than 72 hours")
+        except Exception as cleanup_error:
+            print(f"[RSS Feed] Error during cleanup: {cleanup_error}")
     
     try:
         # Parse RSS feed
@@ -188,7 +243,7 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
         
         for entry in entries:
             try:
-                article_data = parse_feed_entry(entry, use_llm_categorization=use_llm_categorization)
+                article_data = parse_feed_entry(entry, use_llm_categorization=use_llm_categorization, rss_feed_url=feed_url)
                 
                 # Check if article already exists (works for both Supabase and LocalStorage)
                 from local_storage import LocalStorage
@@ -204,11 +259,13 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                             article_data['eli5_llm'] = existing.get('eli5_llm')
                         
                         # Preserve LLM categorization if it exists (don't re-categorize with LLM)
-                        if existing.get('categorization_llm') and existing.get('categorization_llm') != 'Keywords':
+                        # Only preserve if it's a valid LLM (not Keywords, LLM-Failed, etc.)
+                        existing_llm = existing.get('categorization_llm', '')
+                        if existing_llm and existing_llm not in ['Keywords', 'Keywords-Fallback', 'Keywords-Error', 'LLM-Failed', 'Unknown']:
                             # Article already has LLM categorization, keep it
                             article_data['categories'] = existing.get('categories', [])
                             article_data['categorization_llm'] = existing.get('categorization_llm')
-                            print(f"[RSS Checker] Preserving existing LLM categorization for article {article_data.get('stable_id')[:8]}...")
+                            print(f"[RSS Checker] Preserving existing LLM categorization ({existing_llm}) for article {article_data.get('stable_id')[:8]}...")
                         
                         storage.upsert_article(article_data)
                         updated_count += 1
@@ -232,11 +289,13 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                                 article_data['eli5_llm'] = existing.get('eli5_llm')
                             
                             # Preserve LLM categorization if it exists (don't re-categorize with LLM)
-                            if existing.get('categorization_llm') and existing.get('categorization_llm') != 'Keywords':
+                            # Only preserve if it's a valid LLM (not Keywords, LLM-Failed, etc.)
+                            existing_llm = existing.get('categorization_llm', '')
+                            if existing_llm and existing_llm not in ['Keywords', 'Keywords-Fallback', 'Keywords-Error', 'LLM-Failed', 'Unknown']:
                                 # Article already has LLM categorization, keep it
                                 article_data['categories'] = existing.get('categories', [])
                                 article_data['categorization_llm'] = existing.get('categorization_llm')
-                                print(f"[RSS Checker] Preserving existing LLM categorization for article {article_data.get('stable_id')[:8]}...")
+                                print(f"[RSS Checker] Preserving existing LLM categorization ({existing_llm}) for article {article_data.get('stable_id')[:8]}...")
                             
                             storage.upsert_article(article_data)
                             updated_count += 1
@@ -356,30 +415,25 @@ def recategorize_all_articles(limit: int = None, use_llm: bool = True) -> Dict[s
                     processed += 1
                     continue
                 
-                # Recategorize
-                if use_llm:
-                    try:
-                        result = categorize_article(title, description, content)
-                        if isinstance(result, dict):
-                            new_categories = result.get('categories', [])
-                            categorization_llm = result.get('llm', 'Keywords')
-                        else:
-                            new_categories = result if isinstance(result, list) else []
-                            categorization_llm = 'Keywords'
-                    except Exception as llm_error:
-                        print(f"  ⚠️ LLM categorization failed for article {article.get('id', 'unknown')}: {llm_error}")
-                        # Fall back to keywords
-                        from categorization_engine import _categorize_with_keywords
-                        new_categories = _categorize_with_keywords(title, description, content)
-                        categorization_llm = 'Keywords'
-                else:
-                    from categorization_engine import _categorize_with_keywords
-                    new_categories = _categorize_with_keywords(title, description, content)
-                    categorization_llm = 'Keywords'
+                # Recategorize - ALWAYS use LLM (no keyword fallback)
+                try:
+                    result = categorize_article(title, description, content)
+                    if isinstance(result, dict):
+                        new_categories = result.get('categories', ['Algemeen'])
+                        categorization_llm = result.get('llm', 'LLM-Failed')
+                    else:
+                        new_categories = result if isinstance(result, list) else ['Algemeen']
+                        categorization_llm = 'LLM-Failed'
+                except Exception as llm_error:
+                    print(f"  ⚠️ LLM categorization failed for article {article.get('id', 'unknown')}: {llm_error}")
+                    # Use default category, no keyword fallback
+                    new_categories = ['Algemeen']
+                    categorization_llm = 'LLM-Failed'
                 
                 # Ensure we have at least one category
                 if not new_categories:
-                    new_categories = ['binnenland']  # Default category
+                    new_categories = ['Algemeen']  # Default category
+                    categorization_llm = 'LLM-Failed'
                 
                 # Update article
                 article['categories'] = new_categories
