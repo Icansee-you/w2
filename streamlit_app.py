@@ -1707,8 +1707,26 @@ def render_gebruiker_page():
             if st.button("Inloggen", use_container_width=True):
                 result = supabase.sign_in(email, password)
                 if result.get('success'):
-                    st.session_state.user = result.get('user')
-                    st.session_state.preferences = None
+                    user_obj = result.get('user')
+                    # Store user as dict for better persistence across page navigations
+                    if hasattr(user_obj, 'id'):
+                        user_dict = {
+                            'id': user_obj.id,
+                            'email': getattr(user_obj, 'email', email),
+                            'created_at': getattr(user_obj, 'created_at', None)
+                        }
+                    elif isinstance(user_obj, dict):
+                        user_dict = user_obj
+                    else:
+                        # Fallback: try to extract from user object
+                        user_dict = {
+                            'id': getattr(user_obj, 'id', None) or (user_obj.user.id if hasattr(user_obj, 'user') else None),
+                            'email': email,  # Use the email from input
+                            'created_at': None
+                        }
+                    
+                    st.session_state.user = user_dict
+                    st.session_state.preferences = None  # Will be reloaded on next render
                     # Mark that user manually logged in - prevent auto-login
                     st.session_state.manual_login_performed = True
                     # Clear explicit logout flag when user successfully logs in manually
@@ -1874,19 +1892,42 @@ def main():
     # Check authentication
     # IMPORTANT: If user is already in session_state, keep it (don't overwrite with Supabase session)
     # This ensures manual logins are preserved across page navigations
+    
+    # Always ensure preferences are loaded if user exists
+    if st.session_state.user and st.session_state.preferences is None:
+        user_id = get_user_id(st.session_state.user)
+        if user_id:
+            try:
+                st.session_state.preferences = supabase.get_user_preferences(user_id)
+            except Exception as e:
+                print(f"Error loading preferences: {e}")
+    
     if st.session_state.user is None:
         # Only try to get session if user is not already logged in
         # If manual_login_performed is True, we should NOT use Supabase session
         # because the user manually logged in and we don't want to overwrite with test@hotmail.com
         if not st.session_state.get('manual_login_performed', False):
             # First try to get existing session from Supabase
-            user = supabase.get_current_user()
-            if user:
-                st.session_state.user = user
-                # Clear explicit logout flag if user successfully logged in manually
-                if 'user_explicitly_logged_out' in st.session_state:
-                    del st.session_state.user_explicitly_logged_out
-            else:
+            # This will work if Supabase session is still valid
+            try:
+                user = supabase.get_current_user()
+                if user:
+                    # Store user in session state to preserve across page navigations
+                    st.session_state.user = user
+                    # Clear explicit logout flag if user successfully logged in manually
+                    if 'user_explicitly_logged_out' in st.session_state:
+                        del st.session_state.user_explicitly_logged_out
+                    # Load preferences if not already loaded
+                    if st.session_state.preferences is None:
+                        user_id = get_user_id(user)
+                        if user_id:
+                            st.session_state.preferences = supabase.get_user_preferences(user_id)
+            except Exception as e:
+                # If get_current_user fails, continue to auto-login
+                print(f"Could not get current user from Supabase session: {e}")
+                user = None
+            
+            if user is None:
                 # Auto-login with test@hotmail.com ONLY if:
                 # 1. User has NOT manually logged in (manual_login_performed = False)
                 # 2. User has NOT explicitly logged out (user_explicitly_logged_out = False)
@@ -1905,22 +1946,31 @@ def main():
                         result = supabase.sign_in(test_email, test_password)
                         if result.get('success'):
                             user_obj = result.get('user')
-                            st.session_state.user = user_obj
-                            # Ensure email is accessible - store it explicitly if needed
-                            # The user object from Supabase should have email, but we'll handle it in get_user_email()
-                            # Load preferences immediately
-                            user_id = get_user_id(user_obj)
+                            # Store user as dict for better persistence
+                            if hasattr(user_obj, 'id'):
+                                user_dict = {
+                                    'id': user_obj.id,
+                                    'email': getattr(user_obj, 'email', test_email),
+                                    'created_at': getattr(user_obj, 'created_at', None)
+                                }
+                            elif isinstance(user_obj, dict):
+                                user_dict = user_obj
+                            else:
+                                # Fallback
+                                user_dict = {
+                                    'id': getattr(user_obj, 'id', None) or (user_obj.user.id if hasattr(user_obj, 'user') else None),
+                                    'email': test_email,
+                                    'created_at': None
+                                }
+                            
+                            st.session_state.user = user_dict
+                            # Load preferences immediately (but don't overwrite user's choices)
+                            user_id = get_user_id(user_dict)
                             if user_id:
                                 prefs = supabase.get_user_preferences(user_id)
                                 st.session_state.preferences = prefs
-                                # Ensure test@hotmail.com has all categories selected
-                                from categorization_engine import get_all_categories
-                                all_categories = get_all_categories()
-                                if prefs.get('selected_categories') != all_categories:
-                                    # Update to have all categories selected
-                                    supabase.update_user_preferences(user_id, selected_categories=all_categories)
-                                    # Reload preferences
-                                    st.session_state.preferences = supabase.get_user_preferences(user_id)
+                                # NOTE: We do NOT automatically reset categories to all categories
+                                # This allows users to customize their category preferences
                             # Rerun to show the logged-in state
                             st.rerun()
                         # If login fails, silently continue - user can manually login

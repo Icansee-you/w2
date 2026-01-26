@@ -137,12 +137,14 @@ class SupabaseClient:
             response = self.client.table('user_preferences').select('*').eq('user_id', user_id).execute()
             if response.data:
                 prefs = response.data[0]
-                # If selected_categories is missing, None, or empty list, set to all categories
-                selected_cats = prefs.get('selected_categories')
-                if 'selected_categories' not in prefs or selected_cats is None or (isinstance(selected_cats, list) and len(selected_cats) == 0):
+                # Only set default categories if selected_categories is completely missing (new user)
+                # Do NOT overwrite if user has explicitly set categories (even if empty list)
+                if 'selected_categories' not in prefs or prefs.get('selected_categories') is None:
+                    # Only set default if field is completely missing or None (not if it's an empty list)
+                    # Empty list means user explicitly deselected all categories - respect that choice
                     from categorization_engine import get_all_categories
                     prefs['selected_categories'] = get_all_categories()
-                    # Update in database
+                    # Update in database only if it was missing (new user)
                     self.update_user_preferences(user_id, selected_categories=prefs['selected_categories'])
                 return prefs
             else:
@@ -174,19 +176,33 @@ class SupabaseClient:
             return default_prefs
     
     def update_user_preferences(self, user_id: str, blacklist_keywords: List[str] = None, selected_categories: List[str] = None) -> bool:
-        """Update user preferences."""
+        """Update user preferences. Only updates fields that are provided (not None)."""
         try:
             from datetime import datetime
+            
+            # First, get existing preferences to preserve fields that aren't being updated
+            existing_prefs = self.get_user_preferences(user_id)
+            
+            # Build update dict with only fields that are being updated
             prefs = {
                 "user_id": user_id,
                 "updated_at": datetime.utcnow().isoformat()
             }
             
+            # Only update fields that are explicitly provided (not None)
             if blacklist_keywords is not None:
                 prefs["blacklist_keywords"] = blacklist_keywords
+            else:
+                # Preserve existing blacklist if not being updated
+                if existing_prefs.get('blacklist_keywords') is not None:
+                    prefs["blacklist_keywords"] = existing_prefs['blacklist_keywords']
             
             if selected_categories is not None:
                 prefs["selected_categories"] = selected_categories
+            else:
+                # Preserve existing categories if not being updated
+                if existing_prefs.get('selected_categories') is not None:
+                    prefs["selected_categories"] = existing_prefs['selected_categories']
             
             # Try to update first
             update_response = self.client.table('user_preferences').update(prefs).eq('user_id', user_id).execute()
@@ -196,6 +212,8 @@ class SupabaseClient:
             return True
         except Exception as e:
             print(f"Error updating preferences: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     # Article methods

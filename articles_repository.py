@@ -235,74 +235,77 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
         
         for entry in entries:
             try:
-                article_data = parse_feed_entry(entry, use_llm_categorization=use_llm_categorization, rss_feed_url=feed_url)
+                # Extract published_at first (needed for stable_id, but no LLM call yet)
+                published_at = None
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    try:
+                        from datetime import datetime
+                        published_at = datetime(*entry.published_parsed[:6])
+                    except Exception:
+                        pass
                 
-                # Check if article already exists (works for both Supabase and LocalStorage)
+                if not published_at and hasattr(entry, 'published'):
+                    try:
+                        from dateutil import parser
+                        published_at = parser.parse(entry.published)
+                    except Exception:
+                        pass
+                
+                # Generate stable_id to check if article already exists
+                stable_id = generate_stable_id(entry.get('link', ''), published_at)
+                
+                # Check if article already exists BEFORE parsing/categorizing (to avoid unnecessary RouteLLM API calls)
                 from local_storage import LocalStorage
                 from supabase_client import SupabaseClient
                 
+                existing = None
+                article_is_new = False
+                
                 if isinstance(storage, LocalStorage):
                     # Local storage: check if exists
-                    existing = storage.get_article_by_id(article_data['stable_id'])
-                    if existing:
-                        # Preserve ELI5 if exists
-                        if existing.get('eli5_summary_nl'):
-                            article_data['eli5_summary_nl'] = existing['eli5_summary_nl']
-                            article_data['eli5_llm'] = existing.get('eli5_llm')
-                        
-                        # Preserve LLM categorization if it exists (don't re-categorize with LLM)
-                        # Only preserve if it's a valid LLM (not Keywords, LLM-Failed, etc.)
-                        existing_llm = existing.get('categorization_llm', '')
-                        if existing_llm and existing_llm not in ['Keywords', 'Keywords-Fallback', 'Keywords-Error', 'LLM-Failed', 'Unknown']:
-                            # Article already has LLM categorization, keep it
-                            article_data['categories'] = existing.get('categories', [])
-                            article_data['categorization_llm'] = existing.get('categorization_llm')
-                            print(f"[RSS Checker] Preserving existing LLM categorization ({existing_llm}) for article {article_data.get('stable_id')[:8]}...")
-                        
-                        storage.upsert_article(article_data)
-                        updated_count += 1
-                    else:
-                        # Insert new article (will be categorized with LLM if use_llm_categorization=True)
-                        storage.upsert_article(article_data)
-                        inserted_count += 1
+                    existing = storage.get_article_by_id(stable_id)
+                    article_is_new = existing is None
                 elif isinstance(storage, SupabaseClient):
                     # Supabase: check if exists by stable_id
                     try:
-                        # Check if article exists by stable_id - also get categories and categorization_llm
                         response = storage.client.table('articles').select(
                             'id, eli5_summary_nl, categories, categorization_llm, eli5_llm'
-                        ).eq('stable_id', article_data['stable_id']).execute()
+                        ).eq('stable_id', stable_id).execute()
                         
                         if response.data and len(response.data) > 0:
                             existing = response.data[0]
-                            # Preserve ELI5 if it exists
-                            if existing.get('eli5_summary_nl'):
-                                article_data['eli5_summary_nl'] = existing['eli5_summary_nl']
-                                article_data['eli5_llm'] = existing.get('eli5_llm')
-                            
-                            # Preserve LLM categorization if it exists (don't re-categorize with LLM)
-                            # Only preserve if it's a valid LLM (not Keywords, LLM-Failed, etc.)
-                            existing_llm = existing.get('categorization_llm', '')
-                            if existing_llm and existing_llm not in ['Keywords', 'Keywords-Fallback', 'Keywords-Error', 'LLM-Failed', 'Unknown']:
-                                # Article already has LLM categorization, keep it
-                                article_data['categories'] = existing.get('categories', [])
-                                article_data['categorization_llm'] = existing.get('categorization_llm')
-                                print(f"[RSS Checker] Preserving existing LLM categorization ({existing_llm}) for article {article_data.get('stable_id')[:8]}...")
-                            
-                            storage.upsert_article(article_data)
-                            updated_count += 1
+                            article_is_new = False
                         else:
-                            # Insert new article (will be categorized with LLM if use_llm_categorization=True)
+                            article_is_new = True
+                    except Exception as e:
+                        print(f"Error checking article existence in Supabase: {e}")
+                        article_is_new = True  # Assume new if check fails
+                else:
+                    article_is_new = True  # Unknown storage type, assume new
+                
+                # Only parse and categorize if article is NEW
+                # This prevents unnecessary RouteLLM API calls for existing articles
+                if article_is_new:
+                    # Parse entry and categorize (only for new articles - this calls RouteLLM)
+                    article_data = parse_feed_entry(entry, use_llm_categorization=use_llm_categorization, rss_feed_url=feed_url)
+                    
+                    if isinstance(storage, LocalStorage):
+                        storage.upsert_article(article_data)
+                        inserted_count += 1
+                    elif isinstance(storage, SupabaseClient):
+                        try:
                             storage.upsert_article(article_data)
                             inserted_count += 1
-                    except Exception as e:
-                        print(f"Error checking/upserting article in Supabase: {e}")
+                        except Exception as e:
+                            print(f"Error upserting new article in Supabase: {e}")
+                            skipped_count += 1
+                    else:
                         storage.upsert_article(article_data)
                         inserted_count += 1
                 else:
-                    # Unknown storage type, try to upsert anyway
-                    storage.upsert_article(article_data)
-                    inserted_count += 1
+                    # Article already exists - skip parsing/categorization to save RouteLLM API calls
+                    print(f"[RSS Checker] Article {stable_id[:8]}... already exists with categorization, skipping RouteLLM call")
+                    updated_count += 1
                     
             except Exception as e:
                 print(f"Error processing entry: {e}")
