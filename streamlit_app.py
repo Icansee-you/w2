@@ -1232,7 +1232,7 @@ def render_nieuws_page():
                     pass
     
     # Filters
-        search_query = st.text_input("🔍 Zoeken", placeholder="Zoek in artikelen...", key="search")
+    search_query = st.text_input("🔍 Zoeken", placeholder="Zoek in artikelen...", key="search")
     
     st.markdown("---")
     
