@@ -48,8 +48,6 @@ def check_rss_feeds() -> dict:
     
     global _last_check_time, _last_check_result
     
-    print(f"[RSS Checker] Starting RSS feed check at {datetime.now()}")
-    
     # First, cleanup old articles (older than 72 hours)
     cleanup_old_articles()
     
@@ -61,7 +59,12 @@ def check_rss_feeds() -> dict:
     # Check each feed
     for feed_url in RSS_FEED_URLS:
         try:
-            print(f"[RSS Checker] Checking feed: {feed_url}")
+            # Reset counters before each feed
+            from categorization_engine import reset_routellm_categorization_counter
+            from nlp_utils import reset_routellm_eli5_counter
+            reset_routellm_categorization_counter()
+            reset_routellm_eli5_counter()
+            
             # Use LLM categorization for better accuracy
             result = fetch_and_upsert_articles(
                 feed_url, 
@@ -70,29 +73,54 @@ def check_rss_feeds() -> dict:
             )
             
             if result.get('success'):
-                total_inserted += result.get('inserted', 0)
-                total_updated += result.get('updated', 0)
+                inserted = result.get('inserted', 0)
+                updated = result.get('updated', 0)
+                total_inserted += inserted
+                total_updated += updated
                 total_skipped += result.get('skipped', 0)
-                print(f"[RSS Checker] Feed {feed_url}: {result.get('inserted', 0)} new, {result.get('updated', 0)} updated")
+                
+                # Get categorization stats
+                cat_groq = result.get('cat_groq', 0)
+                cat_routellm = result.get('cat_routellm', 0)
+                cat_failed = result.get('cat_failed', 0)
+                
+                # Get RouteLLM API call counts
+                from categorization_engine import get_routellm_categorization_count
+                from nlp_utils import get_routellm_eli5_count
+                routellm_cat_calls = get_routellm_categorization_count()
+                routellm_eli5_calls = get_routellm_eli5_count()
+                
+                # Generate ELI5 for new articles
+                eli5_groq = 0
+                eli5_routellm = 0
+                eli5_failed = 0
+                if inserted > 0:
+                    eli5_result = generate_missing_eli5_summaries(limit=min(inserted, 10))
+                    eli5_groq = eli5_result.get('groq', 0)
+                    eli5_routellm = eli5_result.get('routellm', 0)
+                    eli5_failed = eli5_result.get('failed', 0)
+                
+                # Calculate total API calls
+                total_groq_calls = cat_groq + eli5_groq
+                total_routellm_calls = routellm_cat_calls + routellm_eli5_calls
+                
+                # Log summary per feed (compact format)
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print(f"[{timestamp}] RSS feed {feed_url}: {inserted} nieuw, {updated} bestaand. "
+                      f"Cat: {cat_groq} Groq, {cat_routellm} RouteLLM, {cat_failed} gefaald. "
+                      f"ELI5: {eli5_groq} Groq, {eli5_routellm} RouteLLM, {eli5_failed} gefaald. "
+                      f"API calls: {total_groq_calls} Groq, {total_routellm_calls} RouteLLM")
             else:
                 error_msg = result.get('error', 'Unknown error')
                 errors.append(f"{feed_url}: {error_msg}")
-                print(f"[RSS Checker] Error with feed {feed_url}: {error_msg}")
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print(f"[{timestamp}] RSS feed {feed_url}: Fout - {error_msg}")
                 
         except Exception as e:
             error_msg = f"Exception checking {feed_url}: {str(e)}"
             errors.append(error_msg)
-            print(f"[RSS Checker] {error_msg}")
-    
-    # Generate ELI5 summaries for new articles (limit to avoid overload)
-    if total_inserted > 0:
-        try:
-            print(f"[RSS Checker] Generating ELI5 summaries for {min(total_inserted, 10)} new articles...")
-            eli5_count = generate_missing_eli5_summaries(limit=min(total_inserted, 10))
-            print(f"[RSS Checker] Generated {eli5_count} ELI5 summaries")
-        except Exception as e:
-            print(f"[RSS Checker] Error generating ELI5 summaries: {e}")
-            errors.append(f"ELI5 generation: {str(e)}")
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            print(f"[{timestamp}] RSS feed {feed_url}: Fout - {error_msg}")
     
     _last_check_time = datetime.now()
     _last_check_result = {
@@ -104,17 +132,8 @@ def check_rss_feeds() -> dict:
         'success': len(errors) == 0
     }
     
-    # Log RouteLLM API usage statistics
-    try:
-        from categorization_engine import get_routellm_categorization_count
-        from nlp_utils import get_routellm_eli5_count
-        cat_calls = get_routellm_categorization_count()
-        eli5_calls = get_routellm_eli5_count()
-        print(f"[RSS Checker] RouteLLM API calls - Categorization: {cat_calls}, ELI5: {eli5_calls}, Total: {cat_calls + eli5_calls}")
-    except Exception as e:
-        print(f"[RSS Checker] Could not get RouteLLM stats: {e}")
-    
-    print(f"[RSS Checker] Check complete: {total_inserted} new, {total_updated} updated, {len(errors)} errors")
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{timestamp}] RSS check voltooid: {total_inserted} nieuwe artikelen, {total_updated} bijgewerkt, {len(errors)} fouten")
     
     return _last_check_result
 

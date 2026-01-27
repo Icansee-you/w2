@@ -364,12 +364,19 @@ class SupabaseClient:
             articles = response.data if response.data else []
             
             # Filter by categories array (if provided)
+            # IMPORTANT: Only filter by main_category, ignore sub_categories
             if categories:
                 filtered = []
                 for article in articles:
-                    article_categories = article.get('categories', []) or []
-                    # Check if any of the requested categories match
-                    if any(cat in article_categories for cat in categories):
+                    # Get main_category from article (preferred) or fallback to first category
+                    main_category = article.get('main_category')
+                    if not main_category:
+                        # Fallback: use first category from categories array if main_category not available
+                        article_categories = article.get('categories', []) or []
+                        main_category = article_categories[0] if article_categories else None
+                    
+                    # Only show article if main_category is in selected_categories
+                    if main_category and main_category in categories:
                         filtered.append(article)
                 articles = filtered
             
@@ -439,12 +446,15 @@ class SupabaseClient:
     def update_article_eli5(self, article_id: str, eli5_summary: str, llm: str = None) -> bool:
         """Update article with ELI5 summary and LLM used."""
         try:
+            from datetime import datetime
+            import pytz
+            
             update_data = {
                 'eli5_summary_nl': eli5_summary,
-                'updated_at': 'now()'
+                'updated_at': datetime.now(pytz.UTC).isoformat()
             }
-            if llm:
-                update_data['eli5_llm'] = llm
+            # Always set eli5_llm, even if None (use 'Onbekend' as fallback)
+            update_data['eli5_llm'] = llm if llm else 'Onbekend'
             
             self.client.table('articles').update(update_data).eq('id', article_id).execute()
             return True
@@ -455,10 +465,13 @@ class SupabaseClient:
     def update_article_categories(self, article_id: str, categories: List[str], categorization_llm: str) -> bool:
         """Update article with new categories and LLM used."""
         try:
+            from datetime import datetime
+            import pytz
+            
             update_data = {
                 'categories': categories,
                 'categorization_llm': categorization_llm,
-                'updated_at': 'now()'
+                'updated_at': datetime.now(pytz.UTC).isoformat()
             }
             
             self.client.table('articles').update(update_data).eq('id', article_id).execute()

@@ -72,6 +72,8 @@ Algemeen (default als niets anders past)
 Sub Categories (0 of meer extra labels)
 Kies sub_categories als extra labels uit exact dezelfde lijst. Subcategorieën zijn aanvullend; ze hoeven niet hetzelfde te zijn als de main_category.
 
+BELANGRIJK: "Algemeen" kan NOOIT een sub_categorie zijn. Als main_category "Algemeen" is, geef dan GEEN sub_categories. Als main_category iets anders is (bijv. Sport, Politiek), gebruik dan NOOIT "Algemeen" als sub_categorie.
+
 Inhoudelijke beslisregels (vooral relevant bij algemene feeds)
 - Onderwerp > locatie: als het onderwerp primair Sport/Politiek/Koningshuis/Misdaad is, kies dat boven Buitenland.
 - Opmerkelijk-regel: als het artikel alleen nieuwswaardig is door het vreemde/grappige/ongewone aspect, kies Opmerkelijk als main_category (ook als het zich in sport/politiek afspeelt).
@@ -137,8 +139,13 @@ def categorize_article(title: str, description: str = "", content: str = "", rss
     if forced_main_category:
         main_category = forced_main_category
         # Keep sub_categories from LLM, but ensure main_category is not in sub_categories
+        # Also remove "Algemeen" from sub_categories (it should never be there)
         if main_category in sub_categories:
             sub_categories = [c for c in sub_categories if c != main_category]
+        if main_category == 'Algemeen':
+            sub_categories = []
+        else:
+            sub_categories = [c for c in sub_categories if c != 'Algemeen']
     
     # If LLM fails completely, we should NOT fall back to keywords
     # Instead, return a default category and mark it as failed
@@ -151,6 +158,14 @@ def categorize_article(title: str, description: str = "", content: str = "", rss
         argumentation = 'LLM categorisatie faalde - standaard categorie gebruikt'
         llm = 'LLM-Failed'  # Indicate that LLM failed, not keyword-based
     
+    # Remove "Algemeen" from sub_categories if present (it should never be there)
+    # Also, if main_category is "Algemeen", ensure sub_categories is empty
+    if main_category == 'Algemeen':
+        sub_categories = []
+    else:
+        # Remove "Algemeen" from sub_categories if it somehow got in there
+        sub_categories = [c for c in sub_categories if c != 'Algemeen']
+    
     # Combine main_category and sub_categories into categories list for backward compatibility
     if main_category:
         all_categories = [main_category]
@@ -161,6 +176,11 @@ def categorize_article(title: str, description: str = "", content: str = "", rss
         # If we have categories but no main_category, use first as main
         main_category = categories[0]
         sub_categories = categories[1:] if len(categories) > 1 else []
+        # Remove "Algemeen" from sub_categories if main_category is not "Algemeen"
+        if main_category != 'Algemeen':
+            sub_categories = [c for c in sub_categories if c != 'Algemeen']
+        else:
+            sub_categories = []  # Algemeen has no sub_categories
     
     # Limit to MAX_CATEGORIES
     return {
@@ -491,6 +511,14 @@ def _categorize_with_huggingface(text: str, title: str, api_key: str, rss_feed_u
                         # Convert to new format
                         main_category = valid_categories[0] if valid_categories else None
                         sub_categories = valid_categories[1:] if len(valid_categories) > 1 else []
+                        
+                        # Remove "Algemeen" from sub_categories if main_category is "Algemeen"
+                        if main_category == 'Algemeen':
+                            sub_categories = []
+                        else:
+                            # Remove "Algemeen" from sub_categories if it somehow got in there
+                            sub_categories = [c for c in sub_categories if c != 'Algemeen']
+                        
                         return {
                             'main_category': main_category,
                             'sub_categories': sub_categories,
@@ -666,7 +694,8 @@ def _parse_categorization_response(response: str) -> Dict[str, Any]:
                 sub_cats = [c.strip().strip('"\'') for c in sub_cats_str.split(',')]
                 for sub_cat in sub_cats:
                     for cat in CATEGORIES:
-                        if sub_cat.lower() == cat.lower() and cat != main_category:
+                        # Never add "Algemeen" as sub_category, and never add main_category as sub_category
+                        if sub_cat.lower() == cat.lower() and cat != main_category and cat != 'Algemeen':
                             sub_categories.append(cat)
                             break
         
@@ -677,6 +706,22 @@ def _parse_categorization_response(response: str) -> Dict[str, Any]:
             current_section = 'argumentation'
         elif current_section == 'argumentation':
             argumentation += ' ' + line
+    
+    # Remove "Algemeen" from sub_categories if present (it should never be there)
+    # Also, if main_category is "Algemeen", ensure sub_categories is empty
+    if main_category == 'Algemeen':
+        sub_categories = []
+    else:
+        # Remove "Algemeen" from sub_categories if it somehow got in there
+        sub_categories = [c for c in sub_categories if c != 'Algemeen']
+    
+    # Remove "Algemeen" from sub_categories if present (it should never be there)
+    # Also, if main_category is "Algemeen", ensure sub_categories is empty
+    if main_category == 'Algemeen':
+        sub_categories = []
+    else:
+        # Remove "Algemeen" from sub_categories if it somehow got in there
+        sub_categories = [c for c in sub_categories if c != 'Algemeen']
     
     # Combine main_category and sub_categories for backward compatibility
     categories = []

@@ -107,14 +107,7 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
                 categorization_argumentation = categorization_result.get('categorization_argumentation', '')
                 categorization_llm = categorization_result.get('llm', 'Unknown')
                 
-                # Log which LLM was used
-                _log_with_timestamp(f"[INFO] Article categorized with {categorization_llm}: {main_category}")
-                
-                # If LLM returned 'Keywords' or 'LLM-Failed', log a warning
-                if categorization_llm in ['Keywords', 'Keywords-Fallback', 'Keywords-Error']:
-                    _log_with_timestamp(f"[ERROR] LLM categorization returned {categorization_llm} - this should NEVER happen! RouteLLM should be used.")
-                elif categorization_llm == 'LLM-Failed':
-                    _log_with_timestamp(f"[WARN] All LLM categorization failed - using default 'Algemeen'")
+                # LLM categorization completed (no individual logging)
             else:
                 # Backward compatibility
                 categories = categorization_result if isinstance(categorization_result, list) else []
@@ -125,14 +118,12 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
             
             # Ensure we have at least one category
             if not categories or len(categories) == 0:
-                _log_with_timestamp(f"[WARN] No categories from LLM, using default 'Algemeen'")
                 categories = ['Algemeen']
                 main_category = 'Algemeen'
                 sub_categories = []
                 categorization_argumentation = 'LLM categorisatie faalde - standaard categorie gebruikt'
                 categorization_llm = 'LLM-Failed'
         except Exception as e:
-            _log_with_timestamp(f"[ERROR] LLM categorization failed completely: {e}")
             # Use default category, no keyword fallback
             categories = ['Algemeen']
             main_category = 'Algemeen'
@@ -141,9 +132,8 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
             categorization_llm = 'LLM-Failed'
     
     # ALWAYS use LLM categorization - no keyword fallback
-    # If use_llm_categorization is False, we still try LLM (but log a warning)
+    # If use_llm_categorization is False, we still try LLM
     if not use_llm_categorization:
-        _log_with_timestamp(f"[WARN] use_llm_categorization=False but LLM categorization is required. Using LLM anyway.")
         try:
             categorization_result = categorize_article(title, description, content or '', rss_feed_url=rss_feed_url)
             if isinstance(categorization_result, dict):
@@ -159,7 +149,6 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
                 categorization_argumentation = ''
                 categorization_llm = 'LLM-Failed'
         except Exception as e:
-            _log_with_timestamp(f"[ERROR] LLM categorization failed: {e}")
             categories = ['Algemeen']
             main_category = 'Algemeen'
             sub_categories = []
@@ -239,6 +228,14 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
         updated_count = 0
         skipped_count = 0
         
+        # Counters for categorization and ELI5 by LLM
+        cat_groq = 0
+        cat_routellm = 0
+        cat_failed = 0
+        eli5_groq = 0
+        eli5_routellm = 0
+        eli5_failed = 0
+        
         for entry in entries:
             try:
                 # Extract published_at first (needed for stable_id, but no LLM call yet)
@@ -284,7 +281,6 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                         else:
                             article_is_new = True
                     except Exception as e:
-                        _log_with_timestamp(f"Error checking article existence in Supabase: {e}")
                         article_is_new = True  # Assume new if check fails
                 else:
                     article_is_new = True  # Unknown storage type, assume new
@@ -300,31 +296,36 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                         
                         # Ensure article_data is valid before upserting
                         if not article_data or 'stable_id' not in article_data:
-                            _log_with_timestamp(f"[ERROR] Invalid article_data from parse_feed_entry, skipping article")
                             skipped_count += 1
+                            cat_failed += 1
                             continue
+                        
+                        # Count categorization LLM
+                        cat_llm = article_data.get('categorization_llm', 'Unknown')
+                        if cat_llm == 'Groq':
+                            cat_groq += 1
+                        elif cat_llm == 'RouteLLM':
+                            cat_routellm += 1
+                        else:
+                            cat_failed += 1
                         
                         # Try to upsert the article - this should ALWAYS succeed, even if categorization failed
                         if isinstance(storage, LocalStorage):
                             if storage.upsert_article(article_data):
                                 inserted_count += 1
                             else:
-                                _log_with_timestamp(f"[ERROR] Failed to upsert article in LocalStorage")
                                 skipped_count += 1
                         elif isinstance(storage, SupabaseClient):
                             if storage.upsert_article(article_data):
                                 inserted_count += 1
                             else:
-                                _log_with_timestamp(f"[ERROR] Failed to upsert article in Supabase")
                                 skipped_count += 1
                         else:
                             if storage.upsert_article(article_data):
                                 inserted_count += 1
                             else:
-                                _log_with_timestamp(f"[ERROR] Failed to upsert article")
                                 skipped_count += 1
                     except Exception as parse_error:
-                        _log_with_timestamp(f"[ERROR] Exception during parse_feed_entry: {parse_error}")
                         # Even if parsing fails, try to create a minimal article entry
                         try:
                             minimal_article = {
@@ -347,20 +348,18 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                                 'updated_at': datetime.utcnow().isoformat()
                             }
                             if storage.upsert_article(minimal_article):
-                                _log_with_timestamp(f"[WARN] Saved article with minimal data after parse error")
                                 inserted_count += 1
+                                cat_failed += 1
                             else:
                                 skipped_count += 1
                         except Exception as minimal_error:
-                            _log_with_timestamp(f"[ERROR] Failed to save minimal article after parse error: {minimal_error}")
                             skipped_count += 1
+                            cat_failed += 1
                 else:
                     # Article already exists - skip parsing/categorization to save RouteLLM API calls
-                    _log_with_timestamp(f"[RSS Checker] Article {stable_id[:8]}... already exists, skipping ALL processing (no RouteLLM call)")
                     updated_count += 1
                     
             except Exception as e:
-                _log_with_timestamp(f"Error processing entry: {e}")
                 skipped_count += 1
                 continue
         
@@ -369,7 +368,10 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
             'fetched': fetched_count,
             'inserted': inserted_count,
             'updated': updated_count,
-            'skipped': skipped_count
+            'skipped': skipped_count,
+            'cat_groq': cat_groq,
+            'cat_routellm': cat_routellm,
+            'cat_failed': cat_failed
         }
         
     except Exception as e:
@@ -383,15 +385,18 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
         }
 
 
-def generate_missing_eli5_summaries(limit: int = 5) -> int:
+def generate_missing_eli5_summaries(limit: int = 5) -> Dict[str, Any]:
     """
     Generate ELI5 summaries for articles that don't have them yet.
     
     Returns:
-        Number of summaries generated
+        Dict with counts: generated, groq, routellm, failed
     """
     storage = get_supabase_client()  # Returns Supabase or LocalStorage
     generated_count = 0
+    eli5_groq = 0
+    eli5_routellm = 0
+    eli5_failed = 0
     
     try:
         articles = storage.get_articles_without_eli5(limit=limit)
@@ -403,21 +408,37 @@ def generate_missing_eli5_summaries(limit: int = 5) -> int:
                 if article.get('full_content'):
                     text += f" {article.get('full_content', '')[:1000]}"
                 
-                eli5_summary = generate_eli5_summary_nl(
+                result = generate_eli5_summary_nl_with_llm(
                     text,
                     article.get('title', '')
                 )
                 
-                if eli5_summary:
-                    storage.update_article_eli5(article['id'], eli5_summary)
+                if result and result.get('summary'):
+                    eli5_llm = result.get('llm', 'Unknown')
+                    storage.update_article_eli5(article['id'], result['summary'], eli5_llm)
                     generated_count += 1
+                    
+                    # Count ELI5 LLM
+                    if eli5_llm == 'Groq':
+                        eli5_groq += 1
+                    elif eli5_llm == 'RouteLLM':
+                        eli5_routellm += 1
+                    else:
+                        eli5_failed += 1
+                else:
+                    eli5_failed += 1
             except Exception as e:
-                _log_with_timestamp(f"Error generating ELI5 for article {article.get('id')}: {e}")
+                eli5_failed += 1
                 continue
     except Exception as e:
-        _log_with_timestamp(f"Error getting articles for ELI5: {e}")
+        pass
     
-    return generated_count
+    return {
+        'generated': generated_count,
+        'groq': eli5_groq,
+        'routellm': eli5_routellm,
+        'failed': eli5_failed
+    }
 
 
 def recategorize_all_articles(limit: int = None, use_llm: bool = True) -> Dict[str, Any]:

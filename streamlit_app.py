@@ -299,6 +299,18 @@ st.markdown("""
         overflow-wrap: normal;
     }
     
+    /* Main category (orange background) */
+    .article-category-main {
+        background-color: #ff9800;
+        color: #ffffff;
+    }
+    
+    /* Sub category (blue background - default) */
+    .article-category-sub {
+        background-color: #e3f2fd;
+        color: #1976d2;
+    }
+    
     .eli5-box {
         background-color: #f0f7ff;
         border-left: 4px solid #1f77b4;
@@ -1048,12 +1060,29 @@ def render_article_detail(article_id: str):
                 # Categories on right
                 if categories and len(categories) > 0:
                     from html import escape
-                    # Build all categories in one HTML string
+                    # Get main_category and sub_categories
+                    main_category = article.get('main_category')
+                    sub_categories = article.get('sub_categories', []) or []
+                    
+                    # If main_category not available, use first category as fallback
+                    if not main_category and categories:
+                        main_category = categories[0]
+                        sub_categories = categories[1:] if len(categories) > 1 else []
+                    
+                    # Build category HTML with different styling for main vs sub
                     category_html = '<div style="margin: 0.25rem 0;">'
-                    for cat in categories:
-                        if cat:  # Only add non-empty categories
-                            escaped_cat = escape(str(cat))
-                            category_html += f'<span class="article-category" style="margin-right: 0.5rem; display: inline-block;">{escaped_cat}</span>'
+                    
+                    # Main category (orange)
+                    if main_category:
+                        escaped_main = escape(str(main_category))
+                        category_html += f'<span class="article-category article-category-main" style="margin-right: 0.5rem; display: inline-block;">{escaped_main}</span>'
+                    
+                    # Sub categories (blue)
+                    for sub_cat in sub_categories:
+                        if sub_cat and sub_cat != main_category:  # Don't show main_category twice
+                            escaped_sub = escape(str(sub_cat))
+                            category_html += f'<span class="article-category article-category-sub" style="margin-right: 0.5rem; display: inline-block;">{escaped_sub}</span>'
+                    
                     category_html += '</div>'
                     st.markdown(category_html, unsafe_allow_html=True)
                     
@@ -1080,12 +1109,29 @@ def render_article_detail(article_id: str):
             if categories and len(categories) > 0:
                 st.markdown("---")
                 from html import escape
-                # Build all categories in one HTML string
+                # Get main_category and sub_categories
+                main_category = article.get('main_category')
+                sub_categories = article.get('sub_categories', []) or []
+                
+                # If main_category not available, use first category as fallback
+                if not main_category and categories:
+                    main_category = categories[0]
+                    sub_categories = categories[1:] if len(categories) > 1 else []
+                
+                # Build category HTML with different styling for main vs sub
                 category_html = '<div style="margin: 0.25rem 0;">'
-                for cat in categories:
-                    if cat:
-                        escaped_cat = escape(str(cat))
-                        category_html += f'<span class="article-category" style="margin-right: 0.5rem; display: inline-block;">{escaped_cat}</span>'
+                
+                # Main category (orange)
+                if main_category:
+                    escaped_main = escape(str(main_category))
+                    category_html += f'<span class="article-category article-category-main" style="margin-right: 0.5rem; display: inline-block;">{escaped_main}</span>'
+                
+                # Sub categories (blue)
+                for sub_cat in sub_categories:
+                    if sub_cat and sub_cat != main_category:  # Don't show main_category twice
+                        escaped_sub = escape(str(sub_cat))
+                        category_html += f'<span class="article-category article-category-sub" style="margin-right: 0.5rem; display: inline-block;">{escaped_sub}</span>'
+                
                 category_html += '</div>'
                 st.markdown(category_html, unsafe_allow_html=True)
                 
@@ -1271,7 +1317,7 @@ def render_nieuws_page():
                 blacklist_to_use = None
         
         articles = supabase.get_articles(
-            limit=50,
+            limit=200,
             category=category,
             categories=categories_filter,
             search_query=search_query if search_query else None,
@@ -1298,8 +1344,8 @@ def render_nieuws_page():
                     with cols[col_idx]:
                         render_article_card(articles_list[article_idx], supabase)
         
-        if len(articles) >= 50:
-            st.info("ℹ️ Toon maximaal 50 artikelen. Gebruik filters om te verfijnen.")
+        if len(articles) >= 200:
+            st.info("ℹ️ Toon maximaal 200 artikelen. Gebruik filters om te verfijnen.")
 
 
 def render_waarom_page():
