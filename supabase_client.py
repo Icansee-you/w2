@@ -241,7 +241,7 @@ class SupabaseClient:
             
             # Remove fields that might not exist in the database schema
             # These fields are optional and may not be present in all database setups
-            optional_fields = ['categorization_argumentation', 'sub_categories', 'main_category']
+            optional_fields = ['categorization_argumentation', 'sub_categories', 'main_category', 'rss_feed_url']
             for field in optional_fields:
                 if field in data_to_upsert:
                     # Try to check if field exists, but if it doesn't, remove it
@@ -252,10 +252,11 @@ class SupabaseClient:
             
             # Filter out fields that might not exist in schema
             # Keep only fields that are definitely in the schema
+            # Note: rss_feed_url is now in optional_fields, not safe_fields
             safe_fields = [
                 'stable_id', 'title', 'description', 'url', 'source', 'published_at',
                 'full_content', 'image_url', 'category', 'categories', 'categorization_llm',
-                'eli5_summary_nl', 'eli5_llm', 'rss_feed_url', 'created_at', 'updated_at'
+                'eli5_summary_nl', 'eli5_llm', 'created_at', 'updated_at'
             ]
             
             # Build safe data dict with only known fields
@@ -292,7 +293,7 @@ class SupabaseClient:
                                 safe_data,
                                 on_conflict='stable_id'
                             ).execute()
-                            _log_with_timestamp("[WARN] Upserted article without optional fields (categorization_argumentation, sub_categories, main_category)")
+                            _log_with_timestamp("[WARN] Upserted article without optional fields (categorization_argumentation, sub_categories, main_category, rss_feed_url)")
                             return True
                         except Exception as retry_error:
                             _log_with_timestamp(f"Error upserting article (retry): {retry_error}")
