@@ -264,41 +264,56 @@ class SupabaseClient:
                 if field in data_to_upsert:
                     safe_data[field] = data_to_upsert[field]
             
-            # Try to include optional fields if they exist (but don't fail if they don't)
-            # We'll try the upsert without them first, and if it works, great
-            # If it fails with a schema error, we'll retry without optional fields
-            try:
-                self.client.table('articles').upsert(
-                    safe_data,
-                    on_conflict='stable_id'
-                ).execute()
-                return True
-            except Exception as schema_error:
-                # If it's a schema error about optional fields, try without them
-                error_msg = str(schema_error)
-                if 'categorization_argumentation' in error_msg or 'sub_categories' in error_msg or 'main_category' in error_msg:
-                    # Remove optional fields and try again
-                    for field in optional_fields:
-                        safe_data.pop(field, None)
-                    try:
-                        self.client.table('articles').upsert(
-                            safe_data,
-                            on_conflict='stable_id'
-                        ).execute()
-                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        print(f"[{timestamp}] [WARN] Upserted article without optional fields (categorization_argumentation, sub_categories, main_category)")
-                        return True
-                    except Exception as retry_error:
-                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        print(f"[{timestamp}] Error upserting article (retry): {retry_error}")
+            # Try to include optional fields if they exist in data_to_upsert
+            # These fields may not exist in the database schema, so we'll try with them first
+            # and remove them if we get a schema error
+            optional_fields_data = {}
+            for field in optional_fields:
+                if field in data_to_upsert:
+                    optional_fields_data[field] = data_to_upsert[field]
+            
+            # First try: include optional fields if they exist
+            if optional_fields_data:
+                safe_data_with_optional = {**safe_data, **optional_fields_data}
+                try:
+            self.client.table('articles').upsert(
+                        safe_data_with_optional,
+                        on_conflict='stable_id'
+                    ).execute()
+                    return True
+                except Exception as schema_error:
+                    # If it's a schema error about optional fields, try without them
+                    error_msg = str(schema_error)
+                    if any(field in error_msg for field in optional_fields):
+                        # Remove optional fields and try again with only safe fields
+                        _log_with_timestamp(f"[WARN] Optional fields not in schema, retrying without them: {error_msg}")
+                        try:
+                            self.client.table('articles').upsert(
+                                safe_data,
+                                on_conflict='stable_id'
+                            ).execute()
+                            _log_with_timestamp("[WARN] Upserted article without optional fields (categorization_argumentation, sub_categories, main_category)")
+                            return True
+                        except Exception as retry_error:
+                            _log_with_timestamp(f"Error upserting article (retry): {retry_error}")
+                            return False
+                    else:
+                        # Different error, log and return False
+                        _log_with_timestamp(f"Error upserting article: {schema_error}")
                         return False
-                else:
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    print(f"[{timestamp}] Error upserting article: {schema_error}")
+            else:
+                # No optional fields to include, just use safe_data
+                try:
+                    self.client.table('articles').upsert(
+                        safe_data,
+                on_conflict='stable_id'
+            ).execute()
+            return True
+        except Exception as e:
+                    _log_with_timestamp(f"Error upserting article: {e}")
                     return False
         except Exception as e:
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            print(f"[{timestamp}] Error upserting article: {e}")
+            _log_with_timestamp(f"Error upserting article (outer exception): {e}")
             return False
     
     def get_articles(
@@ -1095,15 +1110,15 @@ def create_supabase_client() -> SupabaseClient:
             "For production, add them to Streamlit Secrets."
         )
     
-    try:
+        try:
         client = SupabaseClient()
         print("DEBUG: Supabase client created successfully")
         return client
-    except Exception as e:
-        raise RuntimeError(
+        except Exception as e:
+            raise RuntimeError(
             f"Failed to create Supabase client: {e}. "
-            "Please check your SUPABASE_URL and SUPABASE_ANON_KEY."
-        ) from e
+                "Please check your SUPABASE_URL and SUPABASE_ANON_KEY."
+            ) from e
     
 
 def get_supabase_client():

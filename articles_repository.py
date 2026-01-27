@@ -293,21 +293,67 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                 # This prevents unnecessary RouteLLM API calls for existing articles
                 if article_is_new:
                     # Parse entry and categorize (only for new articles - this calls RouteLLM)
-                    article_data = parse_feed_entry(entry, use_llm_categorization=use_llm_categorization, rss_feed_url=feed_url)
-                    
-                    if isinstance(storage, LocalStorage):
-                        storage.upsert_article(article_data)
-                        inserted_count += 1
-                    elif isinstance(storage, SupabaseClient):
-                        try:
-                            storage.upsert_article(article_data)
-                            inserted_count += 1
-                        except Exception as e:
-                            _log_with_timestamp(f"Error upserting new article in Supabase: {e}")
+                    # NOTE: parse_feed_entry ALWAYS returns article_data, even if categorization fails
+                    # It will use default 'Algemeen' category if LLM fails
+                    try:
+                        article_data = parse_feed_entry(entry, use_llm_categorization=use_llm_categorization, rss_feed_url=feed_url)
+                        
+                        # Ensure article_data is valid before upserting
+                        if not article_data or 'stable_id' not in article_data:
+                            _log_with_timestamp(f"[ERROR] Invalid article_data from parse_feed_entry, skipping article")
                             skipped_count += 1
-                    else:
-                        storage.upsert_article(article_data)
-                        inserted_count += 1
+                            continue
+                        
+                        # Try to upsert the article - this should ALWAYS succeed, even if categorization failed
+                        if isinstance(storage, LocalStorage):
+                            if storage.upsert_article(article_data):
+                                inserted_count += 1
+                            else:
+                                _log_with_timestamp(f"[ERROR] Failed to upsert article in LocalStorage")
+                                skipped_count += 1
+                        elif isinstance(storage, SupabaseClient):
+                            if storage.upsert_article(article_data):
+                                inserted_count += 1
+                            else:
+                                _log_with_timestamp(f"[ERROR] Failed to upsert article in Supabase")
+                                skipped_count += 1
+                        else:
+                            if storage.upsert_article(article_data):
+                                inserted_count += 1
+                            else:
+                                _log_with_timestamp(f"[ERROR] Failed to upsert article")
+                                skipped_count += 1
+                    except Exception as parse_error:
+                        _log_with_timestamp(f"[ERROR] Exception during parse_feed_entry: {parse_error}")
+                        # Even if parsing fails, try to create a minimal article entry
+                        try:
+                            minimal_article = {
+                                'stable_id': stable_id,
+                                'title': entry.get('title', '')[:500] or 'Geen titel',
+                                'description': entry.get('description') or entry.get('summary', '')[:2000] or '',
+                                'url': entry.get('link', '')[:1000] or '',
+                                'source': 'NOS',
+                                'published_at': None,
+                                'full_content': None,
+                                'image_url': None,
+                                'category': 'Algemeen',
+                                'categories': ['Algemeen'],
+                                'main_category': 'Algemeen',
+                                'sub_categories': [],
+                                'categorization_llm': 'Parse-Error',
+                                'rss_feed_url': feed_url,
+                                'eli5_summary_nl': None,
+                                'created_at': datetime.utcnow().isoformat(),
+                                'updated_at': datetime.utcnow().isoformat()
+                            }
+                            if storage.upsert_article(minimal_article):
+                                _log_with_timestamp(f"[WARN] Saved article with minimal data after parse error")
+                                inserted_count += 1
+                            else:
+                                skipped_count += 1
+                        except Exception as minimal_error:
+                            _log_with_timestamp(f"[ERROR] Failed to save minimal article after parse error: {minimal_error}")
+                            skipped_count += 1
                 else:
                     # Article already exists - skip parsing/categorization to save RouteLLM API calls
                     _log_with_timestamp(f"[RSS Checker] Article {stable_id[:8]}... already exists, skipping ALL processing (no RouteLLM call)")

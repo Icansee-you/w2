@@ -32,6 +32,20 @@ RSS_FEED_OVERRIDES = {
 # Maximum categories per article
 MAX_CATEGORIES = 20
 
+# Global counter for RouteLLM API calls (categorization)
+_routellm_categorization_calls = 0
+
+
+def get_routellm_categorization_count() -> int:
+    """Get the number of RouteLLM API calls for categorization."""
+    return _routellm_categorization_calls
+
+
+def reset_routellm_categorization_counter():
+    """Reset RouteLLM categorization API call counter."""
+    global _routellm_categorization_calls
+    _routellm_categorization_calls = 0
+
 
 def _get_categorization_prompt(title: str, text: str, rss_feed_url: str = None) -> str:
     """Get standardized categorization prompt for all LLMs with new main_category/sub_categories system."""
