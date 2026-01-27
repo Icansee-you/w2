@@ -317,13 +317,14 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                             cat_failed += 1
                         
                         # Try to upsert the article - this should ALWAYS succeed, even if categorization failed
+                        # IMPORTANT: Use only_insert=True to prevent overwriting existing articles
                         if isinstance(storage, LocalStorage):
                             if storage.upsert_article(article_data):
                                 inserted_count += 1
                             else:
                                 skipped_count += 1
                         elif isinstance(storage, SupabaseClient):
-                            if storage.upsert_article(article_data):
+                            if storage.upsert_article(article_data, only_insert=True):
                                 inserted_count += 1
                             else:
                                 skipped_count += 1
@@ -354,11 +355,19 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                                 'created_at': datetime.utcnow().isoformat(),
                                 'updated_at': datetime.utcnow().isoformat()
                             }
-                            if storage.upsert_article(minimal_article):
-                                inserted_count += 1
-                                cat_failed += 1
+                            # Use only_insert=True to prevent overwriting existing articles
+                            if isinstance(storage, SupabaseClient):
+                                if storage.upsert_article(minimal_article, only_insert=True):
+                                    inserted_count += 1
+                                    cat_failed += 1
+                                else:
+                                    skipped_count += 1
                             else:
-                                skipped_count += 1
+                                if storage.upsert_article(minimal_article):
+                                    inserted_count += 1
+                                    cat_failed += 1
+                                else:
+                                    skipped_count += 1
                         except Exception as minimal_error:
                             skipped_count += 1
                             cat_failed += 1

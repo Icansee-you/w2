@@ -109,7 +109,8 @@ Geef je antwoord in exact dit formaat."""
 
 def categorize_article(title: str, description: str = "", content: str = "", rss_feed_url: str = None) -> Dict[str, Any]:
     """
-    Categorize an article using LLM or keyword matching.
+    Categorize an article using LLM only. No keyword fallback.
+    If LLM fails, returns 'Algemeen' as default category.
     
     Args:
         title: Article title
@@ -733,46 +734,10 @@ def _parse_categorization_response(response: str) -> Dict[str, Any]:
     }
 
 
-def _categorize_with_keywords(title: str, description: str, content: str) -> List[str]:
-    """Fallback keyword-based categorization."""
-    text = f"{title} {description} {content}".lower()
-    categories = []
-    
-    # Keyword rules for the new categories (priority order: Koningshuis, Misdaad, Sport, Politiek, Buitenland, Cultuur, Opmerkelijk)
-    
-    # Koningshuis (highest priority)
-    if any(kw in text for kw in ['koning', 'koningin', 'prins', 'prinses', 'beatrix', 'willem-alexander', 'maxima', 'amalia', 'koningshuis', 'oranje', 'koninklijk', 'koninklijke']):
-        categories.append("Koningshuis")
-    
-    # Misdaad
-    if any(kw in text for kw in ['misdaad', 'crimineel', 'diefstal', 'inbraak', 'moord', 'doodslag', 'aanslag', 'terrorisme', 'drugs', 'drugscircuit', 'cybercrime', 'hack', 'vandalisme', 'rechtszaak', 'veroordeeld', 'gevangenis', 'celstraf']):
-        categories.append("Misdaad")
-    
-    # Sport
-    if any(kw in text for kw in ['sport', 'voetbal', 'ajax', 'psv', 'feyenoord', 'eredivisie', 'champions league', 'ek', 'wk voetbal', 'voetballer', 'wielrennen', 'tour de france', 'giro', 'vuelta', 'wielrenner', 'koers', 'fietsen', 'olympische', 'atletiek', 'zwemmen', 'tennis', 'hockey', 'basketbal']):
-        categories.append("Sport")
-    
-    # Politiek (Nederlandse politiek)
-    if any(kw in text for kw in ['politiek', 'kabinet', 'minister', 'premier', 'tweede kamer', 'eerste kamer', 'regering', 'oppositie', 'coalitie', 'den haag', 'binnenhof', 'gemeente', 'burgemeester', 'wethouder', 'gemeenteraad', 'lokaal', 'gemeentelijk', 'verkiezing', 'partij', 'vvd', 'pvda', 'cda', 'd66', 'sp', 'gl', 'fvd', 'pvdd']):
-        categories.append("Politiek")
-    
-    # Buitenland
-    if any(kw in text for kw in ['buitenland', 'europa', 'eu', 'europese unie', 'brussel', 'frankrijk', 'duitsland', 'spanje', 'italië', 'belgië', 'polen', 'amerika', 'verenigde staten', 'vs', 'china', 'japan', 'australië', 'canada', 'rusland', 'oekraïne', 'oekraine', 'ukraine', 'gaza', 'israël', 'israel', 'palestina', 'soedan', 'sudan', 'conflict', 'oorlog', 'aanval', 'internationaal']):
-        categories.append("Buitenland")
-    
-    # Cultuur
-    if any(kw in text for kw in ['cultuur', 'kunst', 'museum', 'theater', 'muziek', 'film', 'boek', 'literatuur', 'tentoonstelling', 'festival', 'cultureel', 'culturele']):
-        categories.append("Cultuur")
-    
-    # Opmerkelijk
-    if any(kw in text for kw in ['opmerkelijk', 'bijzonder', 'vreemd', 'grappig', 'ongewoon', 'raar', 'curieus', 'merkwaardig']):
-        categories.append("Opmerkelijk")
-    
-    # Algemeen (default if nothing matches)
-    if not categories:
-        categories.append("Algemeen")
-    
-    return categories
+# REMOVED: _categorize_with_keywords function
+# Keyword-based categorization has been removed.
+# All categorization now uses LLM only.
+# If LLM fails, articles are categorized as 'Algemeen' with 'LLM-Failed' marker.
 
 
 def get_all_categories() -> List[str]:

@@ -224,13 +224,34 @@ class SupabaseClient:
             return False
     
     # Article methods
-    def upsert_article(self, article_data: Dict[str, Any]) -> bool:
-        """Insert or update an article in Supabase."""
+    def upsert_article(self, article_data: Dict[str, Any], only_insert: bool = False) -> bool:
+        """
+        Insert or update an article in Supabase.
+        
+        Args:
+            article_data: Article data to insert/update
+            only_insert: If True, only insert new articles (skip if exists). 
+                        If False, update existing articles (default: False)
+        """
         try:
             from datetime import datetime
             
             # Create a copy to avoid modifying the original
             data_to_upsert = article_data.copy()
+            
+            # If only_insert is True, check if article already exists
+            if only_insert:
+                stable_id = data_to_upsert.get('stable_id')
+                if stable_id:
+                    try:
+                        response = self.client.table('articles').select('id').eq('stable_id', stable_id).execute()
+                        if response.data and len(response.data) > 0:
+                            # Article already exists, skip update
+                            _log_with_timestamp(f"[Upsert] Article {stable_id} already exists, skipping update (only_insert=True)")
+                            return True  # Return True because we successfully skipped it
+                    except Exception as e:
+                        _log_with_timestamp(f"[Upsert] Error checking if article exists: {e}")
+                        # Continue with insert if check fails
             
             # Ensure categories is a list (Supabase expects array)
             if 'categories' in data_to_upsert and data_to_upsert['categories']:
@@ -277,10 +298,15 @@ class SupabaseClient:
             if optional_fields_data:
                 safe_data_with_optional = {**safe_data, **optional_fields_data}
                 try:
-                    self.client.table('articles').upsert(
-                        safe_data_with_optional,
-                        on_conflict='stable_id'
-                    ).execute()
+                    if only_insert:
+                        # Only insert, don't update existing articles
+                        self.client.table('articles').insert(safe_data_with_optional).execute()
+                    else:
+                        # Normal upsert (update if exists)
+                        self.client.table('articles').upsert(
+                            safe_data_with_optional,
+                            on_conflict='stable_id'
+                        ).execute()
                     return True
                 except Exception as schema_error:
                     # If it's a schema error about optional fields, try without them
@@ -293,10 +319,15 @@ class SupabaseClient:
                         # Remove optional fields and try again with only safe fields
                         _log_with_timestamp(f"[WARN] Optional fields not in schema, retrying without them: {error_msg}")
                         try:
-                            self.client.table('articles').upsert(
-                                safe_data,
-                                on_conflict='stable_id'
-                            ).execute()
+                            if only_insert:
+                                # Only insert, don't update existing articles
+                                self.client.table('articles').insert(safe_data).execute()
+                            else:
+                                # Normal upsert (update if exists)
+                                self.client.table('articles').upsert(
+                                    safe_data,
+                                    on_conflict='stable_id'
+                                ).execute()
                             _log_with_timestamp("[WARN] Upserted article without optional fields (categorization_argumentation, sub_categories, main_category, rss_feed_url)")
                             return True
                         except Exception as retry_error:
@@ -309,10 +340,15 @@ class SupabaseClient:
             else:
                 # No optional fields to include, just use safe_data
                 try:
-                    self.client.table('articles').upsert(
-                        safe_data,
-                        on_conflict='stable_id'
-                    ).execute()
+                    if only_insert:
+                        # Only insert, don't update existing articles
+                        self.client.table('articles').insert(safe_data).execute()
+                    else:
+                        # Normal upsert (update if exists)
+                        self.client.table('articles').upsert(
+                            safe_data,
+                            on_conflict='stable_id'
+                        ).execute()
                     return True
                 except Exception as e:
                     _log_with_timestamp(f"Error upserting article: {e}")
