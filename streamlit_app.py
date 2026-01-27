@@ -421,6 +421,33 @@ st.markdown("""
         margin: 0.5rem 0 !important;
     }
     
+    /* Double height for article title buttons on news overview page */
+    /* Target buttons in columns (article cards) - these are the title buttons */
+    [data-testid="column"] button[data-testid="baseButton-secondary"],
+    [data-testid="column"] .stButton > button {
+        min-height: 4rem !important;
+        height: auto !important;
+        padding-top: 0.75rem !important;
+        padding-bottom: 0.75rem !important;
+        line-height: 1.4 !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        text-align: center !important;
+    }
+    
+    /* Ensure text wraps properly in title buttons */
+    [data-testid="column"] button[data-testid="baseButton-secondary"] > p,
+    [data-testid="column"] .stButton > button > p {
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 1.4 !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+    }
+    
     @media (max-width: 768px) {
         .horizontal-menu {
             flex-direction: column;
@@ -1396,15 +1423,25 @@ def render_nieuws_page():
             st.subheader(section_title)
             
             # Display articles in this date group
-            num_rows = (len(date_articles) + 3) // 4
+            # Use 3 articles per row, centered with 3x whitespace between them
+            num_rows = (len(date_articles) + 2) // 3  # 3 articles per row
             
             for row in range(num_rows):
-                cols = st.columns(4)
-                for col_idx in range(4):
-                    article_idx = row * 4 + col_idx
+                # Create columns: [left margin, article, gap, article, gap, article, right margin]
+                # Smaller gaps between articles horizontally (halved)
+                cols = st.columns([1.5, 2.5, 0.5, 2.5, 0.5, 2.5, 1.5])
+                
+                for article_pos in range(3):  # 3 articles per row
+                    article_idx = row * 3 + article_pos
                     if article_idx < len(date_articles):
+                        # Column positions: 1, 3, 5 (0-indexed)
+                        col_idx = 1 + article_pos * 2
                         with cols[col_idx]:
                             render_article_card(date_articles[article_idx], supabase)
+                
+                # Add one line break between rows (halved vertical spacing)
+                if row < num_rows - 1:  # Don't add after last row
+                    st.markdown("<br>", unsafe_allow_html=True)
             
             articles_displayed += len(date_articles)
         

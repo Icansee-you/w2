@@ -238,6 +238,13 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
         
         for entry in entries:
             try:
+                # Skip articles with specific titles that should not be stored
+                title = entry.get('title', '')
+                if 'Podcast De Dag' in title or 'in Nieuwsuur' in title or title.startswith('Wekdienst'):
+                    skipped_count += 1
+                    _log_with_timestamp(f"[RSS Feed] Skipping article with filtered title: {title[:60]}...")
+                    continue
+                
                 # Extract published_at first (needed for stable_id, but no LLM call yet)
                 published_at = None
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
