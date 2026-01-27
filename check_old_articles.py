@@ -52,7 +52,8 @@ def check_old_articles():
         batch_size = 100
         
         while True:
-            response = supabase.client.table('articles').select('id, published_at, title').order('published_at', desc=True).limit(batch_size).offset(offset).execute()
+            # Try without ordering first to see all articles
+            response = supabase.client.table('articles').select('id, published_at, title').limit(batch_size).offset(offset).execute()
             articles = response.data if response.data else []
             
             if not articles or len(articles) == 0:
@@ -60,6 +61,8 @@ def check_old_articles():
             
             all_articles.extend(articles)
             offset += batch_size
+            
+            print(f"  Opgehaald: {len(all_articles)} artikelen...")
             
             if len(articles) < batch_size:
                 break

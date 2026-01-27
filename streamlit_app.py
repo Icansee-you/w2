@@ -1327,22 +1327,86 @@ def render_nieuws_page():
         st.error(f"Fout bij ophalen artikelen: {str(e)}")
         articles = []
     
-    # Display articles
+    # Display articles grouped by date
     if not articles:
         st.info("ℹ️ Geen artikelen gevonden. Artikelen worden automatisch elke 15 minuten opgehaald.")
     else:
-        st.subheader(f"Artikelen ({len(articles)})")
+        # Group articles by date
+        from collections import defaultdict
+        articles_by_date = defaultdict(list)
+        amsterdam_tz = pytz.timezone('Europe/Amsterdam')
+        today = datetime.now(amsterdam_tz).date()
         
-        articles_list = list(articles)
-        num_rows = (len(articles_list) + 3) // 4
+        for article in articles:
+            published_at = article.get('published_at')
+            if published_at:
+                try:
+                    # Parse published_at to datetime
+                    if isinstance(published_at, str):
+                        pub_dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                    else:
+                        pub_dt = published_at
+                    
+                    # Convert to Amsterdam timezone
+                    if pub_dt.tzinfo is None:
+                        pub_dt = pytz.UTC.localize(pub_dt)
+                    pub_dt_ams = pub_dt.astimezone(amsterdam_tz)
+                    article_date = pub_dt_ams.date()
+                    
+                    articles_by_date[article_date].append(article)
+                except Exception:
+                    # If date parsing fails, put in today's group
+                    articles_by_date[today].append(article)
+            else:
+                # No published_at, put in today's group
+                articles_by_date[today].append(article)
         
-        for row in range(num_rows):
-            cols = st.columns(4)
-            for col_idx in range(4):
-                article_idx = row * 4 + col_idx
-                if article_idx < len(articles_list):
-                    with cols[col_idx]:
-                        render_article_card(articles_list[article_idx], supabase)
+        # Sort dates (most recent first)
+        sorted_dates = sorted(articles_by_date.keys(), reverse=True)
+        
+        # Display articles grouped by date
+        total_articles = len(articles)
+        articles_displayed = 0
+        
+        for date in sorted_dates:
+            date_articles = articles_by_date[date]
+            
+            # Determine section title
+            if date == today:
+                section_title = f"Nieuws van vandaag ({len(date_articles)})"
+            else:
+                days_diff = (today - date).days
+                if days_diff == 1:
+                    section_title = f"Nieuws van gisteren ({len(date_articles)})"
+                elif days_diff == 2:
+                    section_title = f"Nieuws van eergisteren ({len(date_articles)})"
+                else:
+                    # Format date as "Nieuws van [dag] [datum]"
+                    from datetime import date as date_class
+                    day_names = ['maandag', 'dinsdag', 'woensdag', 'donderdag', 'vrijdag', 'zaterdag', 'zondag']
+                    day_name = day_names[date.weekday()]
+                    date_str = date.strftime('%d-%m-%Y')
+                    section_title = f"Nieuws van {day_name} {date_str} ({len(date_articles)})"
+            
+            # Add whitespace before section (except for first section)
+            if articles_displayed > 0:
+                st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Display section title (same font size as main title)
+            st.subheader(section_title)
+            
+            # Display articles in this date group
+            num_rows = (len(date_articles) + 3) // 4
+            
+            for row in range(num_rows):
+                cols = st.columns(4)
+                for col_idx in range(4):
+                    article_idx = row * 4 + col_idx
+                    if article_idx < len(date_articles):
+                        with cols[col_idx]:
+                            render_article_card(date_articles[article_idx], supabase)
+            
+            articles_displayed += len(date_articles)
         
         if len(articles) >= 200:
             st.info("ℹ️ Toon maximaal 200 artikelen. Gebruik filters om te verfijnen.")
