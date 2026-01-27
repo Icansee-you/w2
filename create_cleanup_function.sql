@@ -8,20 +8,23 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-    deleted_count INTEGER;
+    deleted_count INTEGER := 0;
+    temp_count INTEGER;
 BEGIN
     -- Delete articles older than 72 hours based on published_at
     DELETE FROM articles
     WHERE published_at < NOW() - INTERVAL '72 hours';
     
-    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    GET DIAGNOSTICS temp_count = ROW_COUNT;
+    deleted_count := deleted_count + temp_count;
     
     -- Also delete articles without published_at that are older than 72 hours based on created_at
     DELETE FROM articles
     WHERE published_at IS NULL
       AND created_at < NOW() - INTERVAL '72 hours';
     
-    GET DIAGNOSTICS deleted_count = deleted_count + ROW_COUNT;
+    GET DIAGNOSTICS temp_count = ROW_COUNT;
+    deleted_count := deleted_count + temp_count;
     
     RETURN deleted_count;
 END;

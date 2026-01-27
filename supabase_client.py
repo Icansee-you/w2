@@ -576,6 +576,7 @@ class SupabaseClient:
     def delete_old_articles(self, days_old: int = None, hours_old: int = None) -> Dict[str, Any]:
         """
         Delete articles older than specified number of days or hours.
+        First tries to use a database function (if available), otherwise falls back to direct delete.
         
         Args:
             days_old: Number of days old (deprecated, use hours_old instead)
@@ -599,18 +600,39 @@ class SupabaseClient:
             cutoff_date = datetime.now(pytz.UTC) - timedelta(hours=hours_old)
             cutoff_date_str = cutoff_date.isoformat()
             
-            print(f"[Delete Old Articles] Deleting articles older than {hours_old} hours (before {cutoff_date_str})")
+            _log_with_timestamp(f"[Delete Old Articles] Deleting articles older than {hours_old} hours (before {cutoff_date_str})")
             
+            # Method 1: Try using database function (bypasses RLS)
+            try:
+                response = self.client.rpc('delete_old_articles').execute()
+                if response.data is not None:
+                    deleted_count = response.data
+                    if isinstance(deleted_count, list) and len(deleted_count) > 0:
+                        deleted_count = deleted_count[0]
+                    elif isinstance(deleted_count, dict):
+                        deleted_count = deleted_count.get('delete_old_articles', 0)
+                    
+                    _log_with_timestamp(f"[Delete Old Articles] Successfully deleted {deleted_count} articles using database function")
+                    return {
+                        'success': True,
+                        'deleted_count': int(deleted_count) if deleted_count else 0,
+                        'error': None
+                    }
+            except Exception as rpc_error:
+                # Database function not available, fall back to direct delete
+                _log_with_timestamp(f"[Delete Old Articles] Database function not available, using direct delete: {rpc_error}")
+            
+            # Method 2: Direct delete (may be blocked by RLS)
             # First, get count of articles to be deleted (for logging)
             try:
                 count_response = self.client.table('articles').select('id', count='exact').lt('published_at', cutoff_date_str).execute()
                 count = count_response.count if hasattr(count_response, 'count') and count_response.count is not None else 0
             except Exception as e:
-                print(f"[Delete Old Articles] Error counting articles: {e}")
+                _log_with_timestamp(f"[Delete Old Articles] Error counting articles: {e}")
                 count = 0
             
             if count == 0:
-                print(f"[Delete Old Articles] No articles older than {hours_old} hours found")
+                _log_with_timestamp(f"[Delete Old Articles] No articles older than {hours_old} hours found")
                 return {
                     'success': True,
                     'deleted_count': 0,
@@ -622,27 +644,21 @@ class SupabaseClient:
             try:
                 deleted_count = 0
                 
-                # Method 1: Try deleting by published_at using lt() operator
-                try:
-                    # Get article IDs first to verify they exist
-                    articles_to_delete = self.client.table('articles').select('id').lt('published_at', cutoff_date_str).execute()
-                    article_ids = [a['id'] for a in (articles_to_delete.data if articles_to_delete.data else [])]
-                    
-                    if article_ids:
-                        # Delete in batches (Supabase may have limits)
-                        batch_size = 100
-                        for i in range(0, len(article_ids), batch_size):
-                            batch = article_ids[i:i+batch_size]
+                # Get article IDs first to verify they exist
+                articles_to_delete = self.client.table('articles').select('id').lt('published_at', cutoff_date_str).execute()
+                article_ids = [a['id'] for a in (articles_to_delete.data if articles_to_delete.data else [])]
+                
+                if article_ids:
+                    # Delete in batches (Supabase may have limits)
+                    batch_size = 100
+                    for i in range(0, len(article_ids), batch_size):
+                        batch = article_ids[i:i+batch_size]
+                        try:
                             response = self.client.table('articles').delete().in_('id', batch).execute()
-                            deleted_count += len(response.data) if response.data else len(batch)
-                except Exception as e1:
-                    _log_with_timestamp(f"[Delete Old Articles] Error deleting by published_at: {e1}")
-                    # Fallback: try direct delete
-                    try:
-                        response = self.client.table('articles').delete().lt('published_at', cutoff_date_str).execute()
-                        deleted_count = len(response.data) if response.data else 0
-                    except Exception as e2:
-                        _log_with_timestamp(f"[Delete Old Articles] Fallback delete also failed: {e2}")
+                            batch_deleted = len(response.data) if response.data else len(batch)
+                            deleted_count += batch_deleted
+                        except Exception as batch_error:
+                            _log_with_timestamp(f"[Delete Old Articles] Error deleting batch {i//batch_size + 1}: {batch_error}")
                 
                 # Also delete articles without published_at that are old based on created_at
                 try:
@@ -653,12 +669,19 @@ class SupabaseClient:
                         batch_size = 100
                         for i in range(0, len(article_ids_no_pub), batch_size):
                             batch = article_ids_no_pub[i:i+batch_size]
-                            response2 = self.client.table('articles').delete().in_('id', batch).execute()
-                            deleted_count += len(response2.data) if response2.data else len(batch)
+                            try:
+                                response2 = self.client.table('articles').delete().in_('id', batch).execute()
+                                batch_deleted = len(response2.data) if response2.data else len(batch)
+                                deleted_count += batch_deleted
+                            except Exception as batch_error:
+                                _log_with_timestamp(f"[Delete Old Articles] Error deleting batch without published_at {i//batch_size + 1}: {batch_error}")
                 except Exception as e3:
-                    _log_with_timestamp(f"[Delete Old Articles] Error deleting articles without published_at: {e3}")
+                    _log_with_timestamp(f"[Delete Old Articles] Error getting articles without published_at: {e3}")
                 
-                print(f"[Delete Old Articles] Successfully deleted {deleted_count} articles")
+                if deleted_count > 0:
+                    _log_with_timestamp(f"[Delete Old Articles] Successfully deleted {deleted_count} articles")
+                else:
+                    _log_with_timestamp(f"[Delete Old Articles] WARNING: No articles were deleted. This may be due to Row Level Security (RLS) policies. Consider creating the delete_old_articles() database function.")
                 
                 return {
                     'success': True,
@@ -667,7 +690,7 @@ class SupabaseClient:
                 }
             except Exception as e:
                 error_msg = f"Error deleting articles: {str(e)}"
-                print(f"[Delete Old Articles] {error_msg}")
+                _log_with_timestamp(f"[Delete Old Articles] {error_msg}")
                 return {
                     'success': False,
                     'deleted_count': 0,
@@ -675,7 +698,7 @@ class SupabaseClient:
                 }
         except Exception as e:
             error_msg = f"Exception in delete_old_articles: {str(e)}"
-            print(f"[Delete Old Articles] {error_msg}")
+            _log_with_timestamp(f"[Delete Old Articles] {error_msg}")
             return {
                 'success': False,
                 'deleted_count': 0,
