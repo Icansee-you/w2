@@ -754,7 +754,10 @@ def render_horizontal_menu():
     
     with menu_cols[0]:
         if st.button("Nieuws", key="menu_nieuws", use_container_width=True):
+            # Always go to news overview - remove article parameter if present
             st.query_params["page"] = "Nieuws"
+            if "article" in st.query_params:
+                del st.query_params["article"]
             st.rerun()
     with menu_cols[1]:
         if st.button("Achtergrond", key="menu_achtergrond", use_container_width=True):

@@ -285,7 +285,11 @@ class SupabaseClient:
                 except Exception as schema_error:
                     # If it's a schema error about optional fields, try without them
                     error_msg = str(schema_error)
-                    if any(field in error_msg for field in optional_fields):
+                    # Check if error mentions any optional field (case-insensitive)
+                    error_lower = error_msg.lower()
+                    optional_field_found = any(field.lower() in error_lower for field in optional_fields)
+                    
+                    if optional_field_found or 'PGRST204' in error_msg or 'schema cache' in error_lower:
                         # Remove optional fields and try again with only safe fields
                         _log_with_timestamp(f"[WARN] Optional fields not in schema, retrying without them: {error_msg}")
                         try:
