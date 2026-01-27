@@ -167,10 +167,12 @@ def categorize_article(title: str, description: str = "", content: str = "", rss
         sub_categories = [c for c in sub_categories if c != 'Algemeen']
     
     # Combine main_category and sub_categories into categories list for backward compatibility
+    # IMPORTANT: Never include "Algemeen" in categories if it's not the main_category
     if main_category:
         all_categories = [main_category]
         if sub_categories:
-            all_categories.extend([c for c in sub_categories if c != main_category])
+            # Only add sub_categories that are not main_category AND not "Algemeen"
+            all_categories.extend([c for c in sub_categories if c != main_category and c != 'Algemeen'])
         categories = list(dict.fromkeys(all_categories))  # Remove duplicates while preserving order
     elif categories:
         # If we have categories but no main_category, use first as main
@@ -715,19 +717,13 @@ def _parse_categorization_response(response: str) -> Dict[str, Any]:
         # Remove "Algemeen" from sub_categories if it somehow got in there
         sub_categories = [c for c in sub_categories if c != 'Algemeen']
     
-    # Remove "Algemeen" from sub_categories if present (it should never be there)
-    # Also, if main_category is "Algemeen", ensure sub_categories is empty
-    if main_category == 'Algemeen':
-        sub_categories = []
-    else:
-        # Remove "Algemeen" from sub_categories if it somehow got in there
-        sub_categories = [c for c in sub_categories if c != 'Algemeen']
-    
     # Combine main_category and sub_categories for backward compatibility
+    # IMPORTANT: Never include "Algemeen" in categories if it's not the main_category
     categories = []
     if main_category:
         categories.append(main_category)
-    categories.extend([c for c in sub_categories if c not in categories])
+    # Only add sub_categories that are not main_category AND not "Algemeen"
+    categories.extend([c for c in sub_categories if c != main_category and c != 'Algemeen' and c not in categories])
     
     return {
         'main_category': main_category,

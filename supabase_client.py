@@ -620,13 +620,43 @@ class SupabaseClient:
             # Delete articles older than cutoff date
             # Use published_at if available, otherwise use created_at
             try:
-                # Try deleting by published_at first
-                response = self.client.table('articles').delete().lt('published_at', cutoff_date_str).execute()
-                deleted_count = len(response.data) if response.data else 0
+                deleted_count = 0
+                
+                # Method 1: Try deleting by published_at using lt() operator
+                try:
+                    # Get article IDs first to verify they exist
+                    articles_to_delete = self.client.table('articles').select('id').lt('published_at', cutoff_date_str).execute()
+                    article_ids = [a['id'] for a in (articles_to_delete.data if articles_to_delete.data else [])]
+                    
+                    if article_ids:
+                        # Delete in batches (Supabase may have limits)
+                        batch_size = 100
+                        for i in range(0, len(article_ids), batch_size):
+                            batch = article_ids[i:i+batch_size]
+                            response = self.client.table('articles').delete().in_('id', batch).execute()
+                            deleted_count += len(response.data) if response.data else len(batch)
+                except Exception as e1:
+                    _log_with_timestamp(f"[Delete Old Articles] Error deleting by published_at: {e1}")
+                    # Fallback: try direct delete
+                    try:
+                        response = self.client.table('articles').delete().lt('published_at', cutoff_date_str).execute()
+                        deleted_count = len(response.data) if response.data else 0
+                    except Exception as e2:
+                        _log_with_timestamp(f"[Delete Old Articles] Fallback delete also failed: {e2}")
                 
                 # Also delete articles without published_at that are old based on created_at
-                response2 = self.client.table('articles').delete().is_('published_at', 'null').lt('created_at', cutoff_date_str).execute()
-                deleted_count += len(response2.data) if response2.data else 0
+                try:
+                    articles_no_pub = self.client.table('articles').select('id').is_('published_at', 'null').lt('created_at', cutoff_date_str).execute()
+                    article_ids_no_pub = [a['id'] for a in (articles_no_pub.data if articles_no_pub.data else [])]
+                    
+                    if article_ids_no_pub:
+                        batch_size = 100
+                        for i in range(0, len(article_ids_no_pub), batch_size):
+                            batch = article_ids_no_pub[i:i+batch_size]
+                            response2 = self.client.table('articles').delete().in_('id', batch).execute()
+                            deleted_count += len(response2.data) if response2.data else len(batch)
+                except Exception as e3:
+                    _log_with_timestamp(f"[Delete Old Articles] Error deleting articles without published_at: {e3}")
                 
                 print(f"[Delete Old Articles] Successfully deleted {deleted_count} articles")
                 
