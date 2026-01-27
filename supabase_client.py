@@ -276,7 +276,7 @@ class SupabaseClient:
             if optional_fields_data:
                 safe_data_with_optional = {**safe_data, **optional_fields_data}
                 try:
-            self.client.table('articles').upsert(
+                    self.client.table('articles').upsert(
                         safe_data_with_optional,
                         on_conflict='stable_id'
                     ).execute()
@@ -306,10 +306,10 @@ class SupabaseClient:
                 try:
                     self.client.table('articles').upsert(
                         safe_data,
-                on_conflict='stable_id'
-            ).execute()
-            return True
-        except Exception as e:
+                        on_conflict='stable_id'
+                    ).execute()
+                    return True
+                except Exception as e:
                     _log_with_timestamp(f"Error upserting article: {e}")
                     return False
         except Exception as e:
@@ -1110,15 +1110,15 @@ def create_supabase_client() -> SupabaseClient:
             "For production, add them to Streamlit Secrets."
         )
     
-        try:
+    try:
         client = SupabaseClient()
         print("DEBUG: Supabase client created successfully")
         return client
-        except Exception as e:
-            raise RuntimeError(
+    except Exception as e:
+        raise RuntimeError(
             f"Failed to create Supabase client: {e}. "
-                "Please check your SUPABASE_URL and SUPABASE_ANON_KEY."
-            ) from e
+            "Please check your SUPABASE_URL and SUPABASE_ANON_KEY."
+        ) from e
     
 
 def get_supabase_client():
