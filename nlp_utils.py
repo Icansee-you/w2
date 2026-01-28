@@ -29,11 +29,11 @@ def reset_routellm_eli5_counter():
 def generate_eli5_summary_nl(article_text: str, title: str = "") -> Optional[str]:
     """
     Generate an "Explain Like I'm 5" summary in Dutch using a free LLM.
-    
+
     Args:
         article_text: The article content to summarize
         title: Article title (optional, for context)
-    
+
     Returns:
         ELI5 summary in Dutch, or None if generation fails
     """
@@ -66,23 +66,23 @@ def generate_eli5_summary_nl_with_llm(article_text: str, title: str = "") -> Opt
     # Option 1: Groq API (first priority)
     groq_api_key = get_secret('GROQ_API_KEY')
     if groq_api_key:
-        summary = _generate_with_groq(article_text, title, groq_api_key)
-        if summary:
-            return {'summary': summary, 'llm': 'Groq'}
+        result = _generate_with_groq(article_text, title, groq_api_key)
+        if result:
+            return {'summary': result.get('summary'), 'llm': 'Groq', 'token_usage': result.get('token_usage')}
     
     # Option 2: RouteLLM API (second priority)
     routellm_api_key = get_secret('ROUTELLM_API_KEY')
     if routellm_api_key:
-        summary = _generate_with_routellm(article_text, title, routellm_api_key)
-        if summary:
-            return {'summary': summary, 'llm': 'RouteLLM'}
+        result = _generate_with_routellm(article_text, title, routellm_api_key)
+        if result:
+            return {'summary': result.get('summary'), 'llm': 'RouteLLM', 'token_usage': result.get('token_usage')}
     
     # If both Groq and RouteLLM fail, return "failed LLM"
     return {'summary': 'failed LLM', 'llm': 'Failed'}
 
 
-def _generate_with_routellm(text: str, title: str, api_key: str) -> Optional[str]:
-    """Generate ELI5 summary using RouteLLM API with improved prompt."""
+def _generate_with_routellm(text: str, title: str, api_key: str) -> Optional[Dict[str, Any]]:
+    """Generate ELI5 summary using RouteLLM API with improved prompt. Returns dict with summary and optional token_usage."""
     global _routellm_eli5_calls
     if requests is None:
         return None
@@ -124,8 +124,8 @@ ELI5 Samenvatting:"""
             "Content-Type": "application/json"
         }
         
-        # Try different models that RouteLLM might support
-        models_to_try = ["gpt-5", "gpt-4", "gpt-3.5-turbo", "gpt-4o", "gpt-4-turbo"]
+        # Default: gpt-4o-mini (standaard model voor RouteLLM)
+        models_to_try = ["gpt-4o-mini"]
         
         for model in models_to_try:
             try:
@@ -160,14 +160,21 @@ ELI5 Samenvatting:"""
                         if summary:
                             # Clean up the summary (remove any extra formatting)
                             summary = summary.strip()
-                            # Remove common prefixes that LLMs sometimes add
                             prefixes = ["ELI5 Samenvatting:", "Samenvatting:", "ELI5:", "Samenvatting"]
                             for prefix in prefixes:
                                 if summary.startswith(prefix):
                                     summary = summary[len(prefix):].strip()
+                            out = {'summary': summary}
+                            usage = result.get('usage', {})
+                            if usage:
+                                out['token_usage'] = {
+                                    'prompt_tokens': usage.get('prompt_tokens'),
+                                    'completion_tokens': usage.get('completion_tokens'),
+                                    'total_tokens': usage.get('total_tokens'),
+                                }
                             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             print(f"[{timestamp}] [RouteLLM ELI5] Successfully generated ELI5 (Total calls: {_routellm_eli5_calls})")
-                            return summary
+                            return out
                 elif response.status_code == 400:
                     # Model might not be available, try next
                     continue
@@ -387,8 +394,8 @@ Samenvatting (heel simpel, 2-3 zinnen):"""
     return None
 
 
-def _generate_with_groq(text: str, title: str, api_key: str, timeout: int = 30) -> Optional[str]:
-    """Generate ELI5 summary using Groq API with improved prompt."""
+def _generate_with_groq(text: str, title: str, api_key: str, timeout: int = 30) -> Optional[Dict[str, Any]]:
+    """Generate ELI5 summary using Groq API with improved prompt. Returns dict with summary and optional token_usage."""
     try:
         import groq
         from functools import wraps
@@ -438,7 +445,15 @@ ELI5 Samenvatting:"""
             )
             
             summary = chat_completion.choices[0].message.content.strip()
-            return summary
+            out = {'summary': summary}
+            if getattr(chat_completion, 'usage', None):
+                u = chat_completion.usage
+                out['token_usage'] = {
+                    'prompt_tokens': getattr(u, 'prompt_tokens', None),
+                    'completion_tokens': getattr(u, 'completion_tokens', None),
+                    'total_tokens': getattr(u, 'total_tokens', None),
+                }
+            return out
         except Exception as api_error:
             # Check if it's a timeout
             error_str = str(api_error).lower()

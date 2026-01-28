@@ -459,6 +459,18 @@ class SupabaseClient:
             _log_with_timestamp(f"Error getting articles: {e}")
             return []
     
+    def get_article_id_by_stable_id(self, stable_id: str) -> Optional[str]:
+        """Return the article UUID for a given stable_id (for linking llm_usage_log)."""
+        if not stable_id:
+            return None
+        try:
+            response = self.client.table('articles').select('id').eq('stable_id', stable_id).limit(1).execute()
+            if response.data and len(response.data) > 0:
+                return response.data[0].get('id')
+            return None
+        except Exception:
+            return None
+
     def get_article_by_id(self, article_id: str) -> Optional[Dict[str, Any]]:
         """Get a single article by ID."""
         try:
@@ -503,19 +515,51 @@ class SupabaseClient:
         try:
             from datetime import datetime
             import pytz
-            
+
             update_data = {
                 'categories': categories,
                 'categorization_llm': categorization_llm,
                 'updated_at': datetime.now(pytz.UTC).isoformat()
             }
-            
+
             self.client.table('articles').update(update_data).eq('id', article_id).execute()
             return True
         except Exception as e:
             _log_with_timestamp(f"Error updating categories: {e}")
             return False
-    
+
+    def log_llm_usage(
+        self,
+        llm: str,
+        call_type: str,
+        prompt_tokens: Optional[int] = None,
+        completion_tokens: Optional[int] = None,
+        total_tokens: Optional[int] = None,
+        compute_points_used: Optional[float] = None,
+        article_id: Optional[str] = None,
+    ) -> bool:
+        """Log één succesvolle LLM API-call naar llm_usage_log (voor rapportage per uur)."""
+        try:
+            row = {
+                'llm': llm or 'Unknown',
+                'call_type': call_type,
+            }
+            if prompt_tokens is not None:
+                row['prompt_tokens'] = prompt_tokens
+            if completion_tokens is not None:
+                row['completion_tokens'] = completion_tokens
+            if total_tokens is not None:
+                row['total_tokens'] = total_tokens
+            if compute_points_used is not None:
+                row['compute_points_used'] = float(compute_points_used)
+            if article_id:
+                row['article_id'] = article_id
+            self.client.table('llm_usage_log').insert(row).execute()
+            return True
+        except Exception as e:
+            _log_with_timestamp(f"Error logging LLM usage (table may not exist yet): {e}")
+            return False
+
     def get_articles_without_eli5(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Get articles that don't have ELI5 summaries yet. Only returns articles from the last 72 hours."""
         try:

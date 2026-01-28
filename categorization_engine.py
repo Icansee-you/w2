@@ -35,6 +35,9 @@ MAX_CATEGORIES = 20
 # Global counter for RouteLLM API calls (categorization)
 _routellm_categorization_calls = 0
 
+# Global counter for Groq API calls (categorization)
+_groq_categorization_calls = 0
+
 
 def get_routellm_categorization_count() -> int:
     """Get the number of RouteLLM API calls for categorization."""
@@ -45,6 +48,17 @@ def reset_routellm_categorization_counter():
     """Reset RouteLLM categorization API call counter."""
     global _routellm_categorization_calls
     _routellm_categorization_calls = 0
+
+
+def get_groq_categorization_count() -> int:
+    """Get the number of Groq API calls for categorization."""
+    return _groq_categorization_calls
+
+
+def reset_groq_categorization_counter():
+    """Reset Groq categorization API call counter."""
+    global _groq_categorization_calls
+    _groq_categorization_calls = 0
 
 
 def _get_categorization_prompt(title: str, text: str, rss_feed_url: str = None) -> str:
@@ -107,28 +121,36 @@ Geef je antwoord in exact dit formaat."""
     return prompt
 
 
-def categorize_article(title: str, description: str = "", content: str = "", rss_feed_url: str = None) -> Dict[str, Any]:
+def categorize_article(title: str, description: str = "", content: str = "", rss_feed_url: str = None, prefer_groq_then_routellm: bool = False, use_only_routellm: bool = False) -> Dict[str, Any]:
     """
     Categorize an article using LLM only. No keyword fallback.
     If LLM fails, returns 'Algemeen' as default category.
-    
+
     Args:
         title: Article title
         description: Article description/summary
         content: Full article content (optional)
         rss_feed_url: RSS feed URL where article came from (for override logic)
-    
+        prefer_groq_then_routellm: If True, try Groq first, then RouteLLM only (no other providers)
+        use_only_routellm: If True, use only RouteLLM (skip Groq and all others)
+
     Returns:
-        Dictionary with 'categories' (list), 'main_category' (str), 'sub_categories' (list), 
+        Dictionary with 'categories' (list), 'main_category' (str), 'sub_categories' (list),
         'categorization_argumentation' (str), and 'llm' (str) keys
     """
     # Check RSS feed override
     forced_main_category = None
     if rss_feed_url:
         forced_main_category = RSS_FEED_OVERRIDES.get(rss_feed_url)
-    
-    # First try LLM categorization
-    result = _categorize_with_llm(title, description, content, rss_feed_url)
+
+    # LLM provider order
+    if use_only_routellm:
+        provider_order = ['RouteLLM']
+    elif prefer_groq_then_routellm:
+        provider_order = ['Groq', 'RouteLLM']
+    else:
+        provider_order = None
+    result = _categorize_with_llm(title, description, content, rss_feed_url, provider_order=provider_order)
     
     main_category = result.get('main_category')
     sub_categories = result.get('sub_categories', [])
@@ -186,19 +208,23 @@ def categorize_article(title: str, description: str = "", content: str = "", rss
             sub_categories = []  # Algemeen has no sub_categories
     
     # Limit to MAX_CATEGORIES
-    return {
+    out = {
         'categories': categories[:MAX_CATEGORIES],
         'main_category': main_category,
         'sub_categories': sub_categories[:MAX_CATEGORIES-1] if main_category else sub_categories[:MAX_CATEGORIES],
         'categorization_argumentation': argumentation,
         'llm': llm or 'LLM-Failed'
     }
+    if result.get('_token_usage'):
+        out['_token_usage'] = result['_token_usage']
+    return out
 
 
-def _categorize_with_llm(title: str, description: str, content: str, rss_feed_url: str = None) -> Dict[str, Any]:
-    """Categorize using free LLM APIs. Returns dict with 'categories', 'main_category', 'sub_categories', 'categorization_argumentation', and 'llm'."""
+def _categorize_with_llm(title: str, description: str, content: str, rss_feed_url: str = None, provider_order: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Categorize using free LLM APIs. Returns dict with 'categories', 'main_category', 'sub_categories', 'categorization_argumentation', and 'llm'.
+    If provider_order is given (e.g. ['Groq', 'RouteLLM']), only those providers are tried in that order."""
     text = f"{title} {description} {content[:1000]}".strip()
-    
+
     # Import secrets helper
     try:
         from secrets_helper import get_secret
@@ -206,44 +232,55 @@ def _categorize_with_llm(title: str, description: str, content: str, rss_feed_ur
         # Fallback if secrets_helper not available
         def get_secret(key, default=None):
             return os.getenv(key, default)
-    
-    # Try different LLM APIs
-    # RouteLLM first (user requested)
-    routellm_api_key = get_secret('ROUTELLM_API_KEY')
-    if routellm_api_key:
-        result = _categorize_with_routellm(text, title, routellm_api_key, rss_feed_url)
-        if result:
-            return result
-    
-    # Hugging Face (reliable and free)
-    hf_api_key = get_secret('HUGGINGFACE_API_KEY')
-    if hf_api_key:
-        result = _categorize_with_huggingface(text, title, hf_api_key, rss_feed_url)
-        if result:
-            return result
-    
-    # Groq (fast and free)
-    groq_api_key = get_secret('GROQ_API_KEY')
-    if groq_api_key:
-        result = _categorize_with_groq(text, title, groq_api_key, rss_feed_url)
-        if result:
-            return result
-    
-    # OpenAI
-    openai_api_key = get_secret('OPENAI_API_KEY')
-    openai_base_url = get_secret('OPENAI_BASE_URL', 'https://api.openai.com/v1')
-    if openai_api_key:
-        result = _categorize_with_openai(text, title, openai_api_key, openai_base_url, rss_feed_url)
-        if result:
-            return result
-    
-    # ChatLLM - currently not working
-    chatllm_api_key = get_secret('CHATLLM_API_KEY')
-    if chatllm_api_key:
-        result = _categorize_with_chatllm(text, title, chatllm_api_key, rss_feed_url)
-        if result:
-            return result
-    
+
+    def try_groq():
+        groq_api_key = get_secret('GROQ_API_KEY')
+        if groq_api_key:
+            return _categorize_with_groq(text, title, groq_api_key, rss_feed_url)
+        return None
+
+    def try_routellm():
+        routellm_api_key = get_secret('ROUTELLM_API_KEY')
+        if routellm_api_key:
+            return _categorize_with_routellm(text, title, routellm_api_key, rss_feed_url)
+        return None
+
+    def try_huggingface():
+        hf_api_key = get_secret('HUGGINGFACE_API_KEY')
+        if hf_api_key:
+            return _categorize_with_huggingface(text, title, hf_api_key, rss_feed_url)
+        return None
+
+    def try_openai():
+        openai_api_key = get_secret('OPENAI_API_KEY')
+        openai_base_url = get_secret('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+        if openai_api_key:
+            return _categorize_with_openai(text, title, openai_api_key, openai_base_url, rss_feed_url)
+        return None
+
+    def try_chatllm():
+        chatllm_api_key = get_secret('CHATLLM_API_KEY')
+        if chatllm_api_key:
+            return _categorize_with_chatllm(text, title, chatllm_api_key, rss_feed_url)
+        return None
+
+    # Default: Groq eerst, bij fout RouteLLM (alleen gpt-4o-mini). Geen andere LLMs.
+    providers = provider_order if provider_order else ['Groq', 'RouteLLM']
+    name_to_fn = {
+        'Groq': try_groq,
+        'RouteLLM': try_routellm,
+        'HuggingFace': try_huggingface,
+        'OpenAI': try_openai,
+        'ChatLLM': try_chatllm,
+    }
+
+    for name in providers:
+        fn = name_to_fn.get(name)
+        if fn:
+            result = fn()
+            if result:
+                return result
+
     return {'categories': [], 'main_category': None, 'sub_categories': [], 'categorization_argumentation': '', 'llm': None}
 
 
@@ -334,12 +371,14 @@ def _categorize_with_chatllm(text: str, title: str, api_key: str, rss_feed_url: 
 
 def _categorize_with_groq(text: str, title: str, api_key: str, rss_feed_url: str = None) -> Optional[Dict[str, Any]]:
     """Categorize using Groq API."""
+    global _groq_categorization_calls
     try:
         import groq
         client = groq.Groq(api_key=api_key)
-        
+        _groq_categorization_calls += 1
+
         prompt = _get_categorization_prompt(title, text, rss_feed_url)
-        
+
         chat_completion = client.chat.completions.create(
             messages=[
                 {
@@ -361,6 +400,13 @@ def _categorize_with_groq(text: str, title: str, api_key: str, rss_feed_url: str
             if response:
                 parsed = _parse_categorization_response(response)
                 parsed['llm'] = 'Groq'
+                if getattr(chat_completion, 'usage', None):
+                    u = chat_completion.usage
+                    parsed['_token_usage'] = {
+                        'prompt_tokens': getattr(u, 'prompt_tokens', None),
+                        'completion_tokens': getattr(u, 'completion_tokens', None),
+                        'total_tokens': getattr(u, 'total_tokens', None),
+                    }
                 return parsed
         return None
     except Exception as e:
@@ -559,8 +605,8 @@ def _categorize_with_routellm(text: str, title: str, api_key: str, rss_feed_url:
             "Content-Type": "application/json"
         }
         
-        # Try different models that RouteLLM might support
-        models_to_try = ["gpt-5", "gpt-4", "gpt-3.5-turbo", "gpt-4o", "gpt-4-turbo"]
+        # User choice: only gpt-4o-mini
+        models_to_try = ["gpt-4o-mini"]
         
         for model in models_to_try:
             try:
@@ -578,28 +624,67 @@ def _categorize_with_routellm(text: str, title: str, api_key: str, rss_feed_url:
                     ],
                     "max_tokens": 200,
                     "temperature": 0.3,
-                    "stream": False  # Non-streaming for simplicity
+                    "stream": False
                 }
                 
                 response = requests.post(
                     url,
                     headers=headers,
-                    data=json.dumps(payload),  # Use data=json.dumps() as per documentation
+                    data=json.dumps(payload),
                     timeout=30
                 )
                 
                 if response.status_code == 200:
                     result = response.json()
-                    if result and 'choices' in result and len(result['choices']) > 0:
-                        response_text = result['choices'][0].get('message', {}).get('content', '').strip()
-                        if response_text:
-                            parsed = _parse_categorization_response(response_text)
-                            parsed['llm'] = 'RouteLLM'
-                            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            print(f"[{timestamp}] [RouteLLM] Successfully categorized using model {model} (Total calls: {_routellm_categorization_calls})")
-                            return parsed
+                    if not result or 'choices' not in result or len(result['choices']) == 0:
+                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        print(f"[{timestamp}] [RouteLLM] Model {model}: 200 OK but unexpected body (no choices). Keys: {list(result.keys()) if result else 'None'}")
+                        continue
+                    msg = result['choices'][0].get('message', {})
+                    response_text = (msg.get('content') or '').strip()
+                    if isinstance(response_text, list):
+                        response_text = ' '.join(str(p.get('text', p)) for p in response_text if isinstance(p, dict)).strip()
+                    if not response_text:
+                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        print(f"[{timestamp}] [RouteLLM] Model {model}: 200 OK but empty content. message keys: {list(msg.keys())}")
+                        continue
+                    parsed = _parse_categorization_response(response_text)
+                    if not parsed.get('main_category') and not parsed.get('categories'):
+                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        print(f"[{timestamp}] [RouteLLM] Model {model}: parse failed (no main_category). Response (first 300 chars): {response_text[:300]!r}")
+                        continue
+                    parsed['llm'] = 'RouteLLM'
+                    usage = result.get('usage') or result.get('completion_usage') or {}
+                    if isinstance(usage, dict):
+                        prompt_tokens = usage.get('prompt_tokens') or usage.get('input_tokens')
+                        completion_tokens = usage.get('completion_tokens') or usage.get('output_tokens')
+                        total_tokens = usage.get('total_tokens')
+                        if total_tokens is None and (prompt_tokens is not None or completion_tokens is not None):
+                            total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+                        parsed['_token_usage'] = {
+                            'prompt_tokens': prompt_tokens,
+                            'completion_tokens': completion_tokens,
+                            'total_tokens': total_tokens,
+                            'compute_points_used': usage.get('compute_points_used'),
+                        }
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[{timestamp}] [RouteLLM] Successfully categorized using model {model} (Total calls: {_routellm_categorization_calls})")
+                    if parsed.get('_token_usage'):
+                        u = parsed['_token_usage']
+                        if u.get('total_tokens') is not None or u.get('compute_points_used') is not None:
+                            print(f"[{timestamp}] [RouteLLM] Token usage: prompt={u.get('prompt_tokens')}, completion={u.get('completion_tokens')}, total={u.get('total_tokens')}, compute_points_used={u.get('compute_points_used')}")
+                        else:
+                            print(f"[{timestamp}] [RouteLLM] Token usage niet in response. Response usage keys: {list(result.get('usage') or result.get('completion_usage') or {})}")
+                    else:
+                        print(f"[{timestamp}] [RouteLLM] Geen usage in response. Top-level keys: {list(result.keys())}")
+                    return parsed
                 elif response.status_code == 400:
-                    # Model might not be available, try next
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    try:
+                        err = response.json()
+                        print(f"[{timestamp}] [RouteLLM] Model {model} not available (400): {err.get('error', err)}")
+                    except Exception:
+                        print(f"[{timestamp}] [RouteLLM] Model {model} not available (400), trying next")
                     continue
                 elif response.status_code == 401:
                     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

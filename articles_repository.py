@@ -33,8 +33,8 @@ except ImportError:
         cgi.parse_header = parse_header
 
 import feedparser
-from supabase_client import get_supabase_client
-from nlp_utils import generate_eli5_summary_nl
+from supabase_client import get_supabase_client, SupabaseClient
+from nlp_utils import generate_eli5_summary_nl, generate_eli5_summary_nl_with_llm
 from categorization_engine import categorize_article
 
 
@@ -80,34 +80,31 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
                 break
     
     stable_id = generate_stable_id(entry.get('link', ''), published_at)
-    
+    token_usage_to_log = None
+
     # Get title, description, and content for categorization
     title = entry.get('title', '')[:500]
     description = entry.get('description') or entry.get('summary', '')[:2000]
     content = entry.get('content', [{}])[0].get('value', '')[:10000] if entry.get('content') else None
     
-    # Categorize article - ALWAYS use LLM categorization (RouteLLM preferred)
+    # Categorize article - ALWAYS use LLM: eerst Groq, bij fout RouteLLM (alleen gpt-4o-mini)
     # NOTE: This categorization will only be used for NEW articles.
     # Existing articles will preserve their existing LLM categorization (see fetch_and_upsert_articles)
     if use_llm_categorization:
         try:
-            # Ensure RouteLLM API key is available
-            import os
-            if not os.getenv('ROUTELLM_API_KEY'):
-                # Set default RouteLLM API key if not available
-                os.environ['ROUTELLM_API_KEY'] = 's2_760166137897436c8b1dc5248b05db5a'
-            
-            # Use LLM categorization (RouteLLM preferred, falls back to other LLMs if needed)
-            # Only do this for NEW articles - existing articles will preserve their categorization
-            categorization_result = categorize_article(title, description, content or '', rss_feed_url=rss_feed_url)
+            # Standaard RSS: Groq eerst, bij foutmelding alleen RouteLLM met gpt-4o-mini
+            categorization_result = categorize_article(
+                title, description, content or '',
+                rss_feed_url=rss_feed_url,
+                prefer_groq_then_routellm=True,
+            )
             if isinstance(categorization_result, dict):
                 categories = categorization_result.get('categories', [])
                 main_category = categorization_result.get('main_category')
                 sub_categories = categorization_result.get('sub_categories', [])
                 categorization_argumentation = categorization_result.get('categorization_argumentation', '')
                 categorization_llm = categorization_result.get('llm', 'Unknown')
-                
-                # LLM categorization completed (no individual logging)
+                token_usage_to_log = categorization_result.get('_token_usage')
             else:
                 # Backward compatibility
                 categories = categorization_result if isinstance(categorization_result, list) else []
@@ -130,31 +127,39 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
             sub_categories = []
             categorization_argumentation = f'LLM categorisatie faalde - fout: {str(e)}'
             categorization_llm = 'LLM-Failed'
-    
+            token_usage_to_log = None
+
     # ALWAYS use LLM categorization - no keyword fallback
-    # If use_llm_categorization is False, we still try LLM
+    # If use_llm_categorization is False, we still try LLM (Groq eerst, dan RouteLLM gpt-4o-mini)
     if not use_llm_categorization:
         try:
-            categorization_result = categorize_article(title, description, content or '', rss_feed_url=rss_feed_url)
+            categorization_result = categorize_article(
+                title, description, content or '',
+                rss_feed_url=rss_feed_url,
+                prefer_groq_then_routellm=True,
+            )
             if isinstance(categorization_result, dict):
                 categories = categorization_result.get('categories', ['Algemeen'])
                 main_category = categorization_result.get('main_category', 'Algemeen')
                 sub_categories = categorization_result.get('sub_categories', [])
                 categorization_argumentation = categorization_result.get('categorization_argumentation', '')
                 categorization_llm = categorization_result.get('llm', 'LLM-Failed')
+                token_usage_to_log = categorization_result.get('_token_usage')
             else:
                 categories = ['Algemeen']
                 main_category = 'Algemeen'
                 sub_categories = []
                 categorization_argumentation = ''
                 categorization_llm = 'LLM-Failed'
+                token_usage_to_log = None
         except Exception as e:
             categories = ['Algemeen']
             main_category = 'Algemeen'
             sub_categories = []
             categorization_argumentation = f'LLM categorisatie faalde: {str(e)}'
             categorization_llm = 'LLM-Failed'
-    
+            token_usage_to_log = None
+
     return {
         'stable_id': stable_id,
         'title': title,
@@ -173,7 +178,8 @@ def parse_feed_entry(entry: Dict[str, Any], use_llm_categorization: bool = True,
         'rss_feed_url': rss_feed_url,  # RSS feed URL where article came from
         'eli5_summary_nl': None,  # Will be generated later
         'created_at': datetime.utcnow().isoformat(),
-        'updated_at': datetime.utcnow().isoformat()
+        'updated_at': datetime.utcnow().isoformat(),
+        '_token_usage': token_usage_to_log,
     }
 
 
@@ -315,7 +321,10 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                             cat_routellm += 1
                         else:
                             cat_failed += 1
-                        
+
+                        # Token usage direct na categorisatie in DB loggen (per-uur rapportage)
+                        token_usage = article_data.pop('_token_usage', None)
+
                         # Try to upsert the article - this should ALWAYS succeed, even if categorization failed
                         # IMPORTANT: Use only_insert=True to prevent overwriting existing articles
                         if isinstance(storage, LocalStorage):
@@ -326,6 +335,18 @@ def fetch_and_upsert_articles(feed_url: str, max_items: Optional[int] = None, us
                         elif isinstance(storage, SupabaseClient):
                             if storage.upsert_article(article_data, only_insert=True):
                                 inserted_count += 1
+                                # Direct na categorisatie + upsert: tokengebruik loggen in DB (incl. article_id)
+                                if token_usage:
+                                    article_id = storage.get_article_id_by_stable_id(article_data.get('stable_id'))
+                                    storage.log_llm_usage(
+                                        llm=cat_llm,
+                                        call_type='categorization',
+                                        prompt_tokens=token_usage.get('prompt_tokens'),
+                                        completion_tokens=token_usage.get('completion_tokens'),
+                                        total_tokens=token_usage.get('total_tokens'),
+                                        compute_points_used=token_usage.get('compute_points_used'),
+                                        article_id=article_id,
+                                    )
                             else:
                                 skipped_count += 1
                         else:
@@ -432,8 +453,19 @@ def generate_missing_eli5_summaries(limit: int = 5) -> Dict[str, Any]:
                 if result and result.get('summary'):
                     eli5_llm = result.get('llm', 'Unknown')
                     storage.update_article_eli5(article['id'], result['summary'], eli5_llm)
+                    token_usage = result.get('token_usage')
+                    if token_usage and isinstance(storage, SupabaseClient):
+                        storage.log_llm_usage(
+                            llm=eli5_llm,
+                            call_type='eli5',
+                            prompt_tokens=token_usage.get('prompt_tokens'),
+                            completion_tokens=token_usage.get('completion_tokens'),
+                            total_tokens=token_usage.get('total_tokens'),
+                            compute_points_used=token_usage.get('compute_points_used'),
+                            article_id=article.get('id'),
+                        )
                     generated_count += 1
-                    
+
                     # Count ELI5 LLM
                     if eli5_llm == 'Groq':
                         eli5_groq += 1
