@@ -11,6 +11,9 @@ try:
 except ImportError:
     requests = None  # Will be handled gracefully in functions that use it
 
+# RouteLLM: expliciet alleen dit model (geen intelligent routing naar GPT-5)
+ROUTELLM_MODEL = "gpt-4o-mini"
+
 # Global counter for RouteLLM API calls (ELI5)
 _routellm_eli5_calls = 0
 
@@ -118,91 +121,87 @@ Artikel:
 
 ELI5 Samenvatting:"""
         
+        # Stuur altijd expliciet model (nooit weglaten; anders default route-llm → GPT-5)
         url = "https://routellm.abacus.ai/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        
-        # Default: gpt-4o-mini (standaard model voor RouteLLM)
-        models_to_try = ["gpt-4o-mini"]
-        
-        for model in models_to_try:
-            try:
-                payload = {
-                    "model": model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": "Je bent een expert in het uitleggen van complexe onderwerpen op een begrijpelijke manier. Je schrijft in een speelse, vriendschappelijke toon die geschikt is voor volwassenen en tieners."
-                        },
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ],
-                    "max_tokens": 300,
-                    "temperature": 0.7,
-                    "stream": False
-                }
-                
-                response = requests.post(
-                    url,
-                    headers=headers,
-                    data=json.dumps(payload),
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    if result and 'choices' in result and len(result['choices']) > 0:
-                        summary = result['choices'][0].get('message', {}).get('content', '').strip()
-                        if summary:
-                            # Clean up the summary (remove any extra formatting)
-                            summary = summary.strip()
-                            prefixes = ["ELI5 Samenvatting:", "Samenvatting:", "ELI5:", "Samenvatting"]
-                            for prefix in prefixes:
-                                if summary.startswith(prefix):
-                                    summary = summary[len(prefix):].strip()
-                            out = {'summary': summary}
-                            usage = result.get('usage', {})
-                            if usage:
-                                out['token_usage'] = {
-                                    'prompt_tokens': usage.get('prompt_tokens'),
-                                    'completion_tokens': usage.get('completion_tokens'),
-                                    'total_tokens': usage.get('total_tokens'),
-                                }
-                            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            print(f"[{timestamp}] [RouteLLM ELI5] Successfully generated ELI5 (Total calls: {_routellm_eli5_calls})")
-                            return out
-                elif response.status_code == 400:
-                    # Model might not be available, try next
-                    continue
-                elif response.status_code == 401:
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    print(f"[{timestamp}] [RouteLLM ELI5] ❌ Authentication error (401) - API key is invalid or expired")
-                    print(f"[{timestamp}] [RouteLLM ELI5] Please check your ROUTELLM_API_KEY in Streamlit Secrets or .env file")
-                    return None
-                elif response.status_code == 403:
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    try:
-                        error_detail = response.json()
-                        print(f"[{timestamp}] [RouteLLM ELI5] ❌ Authorization error (403): {error_detail}")
-                    except:
-                        print(f"[{timestamp}] [RouteLLM ELI5] ❌ Authorization error (403) - You are not authorized to make requests")
-                    print(f"[{timestamp}] [RouteLLM ELI5] This usually means your API key has expired or doesn't have the right permissions")
-                    return None
-                else:
-                    # Log error but try next model
-                    continue
-                    
-            except requests.exceptions.RequestException:
-                continue
-            except Exception as e:
-                print(f"[RouteLLM ELI5] Error for model {model}: {e}")
-                continue
-        
-        return None
+        model = ROUTELLM_MODEL
+        try:
+            payload = {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "Je bent een expert in het uitleggen van complexe onderwerpen op een begrijpelijke manier. Je schrijft in een speelse, vriendschappelijke toon die geschikt is voor volwassenen en tieners."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "max_tokens": 300,
+                "temperature": 0.7,
+                "stream": False
+            }
+            response = requests.post(
+                url,
+                headers=headers,
+                data=json.dumps(payload),
+                timeout=30
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result and 'choices' in result and len(result['choices']) > 0:
+                    response_model = result.get('model') or ''
+                    if response_model and 'gpt-4o-mini' not in response_model.lower():
+                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        print(f"[{timestamp}] [RouteLLM ELI5] WAARSCHUWING: Wij vroegen '{model}' maar RouteLLM rapporteerde '{response_model}'.")
+                    summary = result['choices'][0].get('message', {}).get('content', '').strip()
+                    if summary:
+                        summary = summary.strip()
+                        prefixes = ["ELI5 Samenvatting:", "Samenvatting:", "ELI5:", "Samenvatting"]
+                        for prefix in prefixes:
+                            if summary.startswith(prefix):
+                                summary = summary[len(prefix):].strip()
+                        out = {'summary': summary}
+                        usage = result.get('usage', {})
+                        if usage:
+                            out['token_usage'] = {
+                                'prompt_tokens': usage.get('prompt_tokens'),
+                                'completion_tokens': usage.get('completion_tokens'),
+                                'total_tokens': usage.get('total_tokens'),
+                            }
+                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        print(f"[{timestamp}] [RouteLLM ELI5] Successfully generated ELI5 (Total calls: {_routellm_eli5_calls})")
+                        return out
+                return None
+            if response.status_code == 400:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print(f"[{timestamp}] [RouteLLM ELI5] Model {model} not available (400)")
+                return None
+            if response.status_code == 401:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print(f"[{timestamp}] [RouteLLM ELI5] ❌ Authentication error (401) - API key is invalid or expired")
+                print(f"[{timestamp}] [RouteLLM ELI5] Please check your ROUTELLM_API_KEY in Streamlit Secrets or .env file")
+                return None
+            if response.status_code == 403:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                try:
+                    error_detail = response.json()
+                    print(f"[{timestamp}] [RouteLLM ELI5] ❌ Authorization error (403): {error_detail}")
+                except Exception:
+                    print(f"[{timestamp}] [RouteLLM ELI5] ❌ Authorization error (403) - You are not authorized to make requests")
+                print(f"[{timestamp}] [RouteLLM ELI5] This usually means your API key has expired or doesn't have the right permissions")
+                return None
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"[RouteLLM ELI5] Request error: {e}")
+            return None
+        except Exception as e:
+            print(f"[RouteLLM ELI5] Error: {e}")
+            return None
     except Exception as e:
         print(f"RouteLLM ELI5 generation error: {e}")
         return None

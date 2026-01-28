@@ -32,6 +32,10 @@ RSS_FEED_OVERRIDES = {
 # Maximum categories per article
 MAX_CATEGORIES = 20
 
+# RouteLLM: expliciet alleen dit model (geen intelligent routing naar GPT-5)
+# Zie https://abacus.ai/help/developer-platform/route-llm/api - stuur exacte model-id, nooit "route-llm"
+ROUTELLM_MODEL = "gpt-4o-mini"
+
 # Global counter for RouteLLM API calls (categorization)
 _routellm_categorization_calls = 0
 
@@ -598,20 +602,16 @@ def _categorize_with_routellm(text: str, title: str, api_key: str, rss_feed_url:
         
         prompt = _get_categorization_prompt(title, text, rss_feed_url)
         
-        # RouteLLM endpoint from documentation
+        # RouteLLM endpoint – stuur altijd expliciet model (nooit weglaten, anders default = route-llm → GPT-5)
         url = "https://routellm.abacus.ai/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        
-        # User choice: only gpt-4o-mini
-        models_to_try = ["gpt-4o-mini"]
-        
-        for model in models_to_try:
-            try:
-                payload = {
-                    "model": model,
+        model = ROUTELLM_MODEL
+        try:
+            payload = {
+                "model": model,
                     "messages": [
                         {
                             "role": "system",
@@ -626,100 +626,97 @@ def _categorize_with_routellm(text: str, title: str, api_key: str, rss_feed_url:
                     "temperature": 0.3,
                     "stream": False
                 }
-                
-                response = requests.post(
-                    url,
-                    headers=headers,
-                    data=json.dumps(payload),
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    if not result or 'choices' not in result or len(result['choices']) == 0:
-                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        print(f"[{timestamp}] [RouteLLM] Model {model}: 200 OK but unexpected body (no choices). Keys: {list(result.keys()) if result else 'None'}")
-                        continue
-                    msg = result['choices'][0].get('message', {})
-                    response_text = (msg.get('content') or '').strip()
-                    if isinstance(response_text, list):
-                        response_text = ' '.join(str(p.get('text', p)) for p in response_text if isinstance(p, dict)).strip()
-                    if not response_text:
-                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        print(f"[{timestamp}] [RouteLLM] Model {model}: 200 OK but empty content. message keys: {list(msg.keys())}")
-                        continue
-                    parsed = _parse_categorization_response(response_text)
-                    if not parsed.get('main_category') and not parsed.get('categories'):
-                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        print(f"[{timestamp}] [RouteLLM] Model {model}: parse failed (no main_category). Response (first 300 chars): {response_text[:300]!r}")
-                        continue
-                    parsed['llm'] = 'RouteLLM'
-                    usage = result.get('usage') or result.get('completion_usage') or {}
-                    if isinstance(usage, dict):
-                        prompt_tokens = usage.get('prompt_tokens') or usage.get('input_tokens')
-                        completion_tokens = usage.get('completion_tokens') or usage.get('output_tokens')
-                        total_tokens = usage.get('total_tokens')
-                        if total_tokens is None and (prompt_tokens is not None or completion_tokens is not None):
-                            total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
-                        parsed['_token_usage'] = {
-                            'prompt_tokens': prompt_tokens,
-                            'completion_tokens': completion_tokens,
-                            'total_tokens': total_tokens,
-                            'compute_points_used': usage.get('compute_points_used'),
-                        }
+            response = requests.post(
+                url,
+                headers=headers,
+                data=json.dumps(payload),
+                timeout=30
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if not result or 'choices' not in result or len(result['choices']) == 0:
                     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    print(f"[{timestamp}] [RouteLLM] Successfully categorized using model {model} (Total calls: {_routellm_categorization_calls})")
-                    if parsed.get('_token_usage'):
-                        u = parsed['_token_usage']
-                        if u.get('total_tokens') is not None or u.get('compute_points_used') is not None:
-                            print(f"[{timestamp}] [RouteLLM] Token usage: prompt={u.get('prompt_tokens')}, completion={u.get('completion_tokens')}, total={u.get('total_tokens')}, compute_points_used={u.get('compute_points_used')}")
-                        else:
-                            print(f"[{timestamp}] [RouteLLM] Token usage niet in response. Response usage keys: {list(result.get('usage') or result.get('completion_usage') or {})}")
+                    print(f"[{timestamp}] [RouteLLM] Model {model}: 200 OK but unexpected body (no choices). Keys: {list(result.keys()) if result else 'None'}")
+                    return None
+                response_model = result.get('model') or ''
+                if response_model and response_model != model and 'gpt-4o-mini' not in response_model.lower():
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[{timestamp}] [RouteLLM] WAARSCHUWING: Wij vroegen model '{model}' maar RouteLLM rapporteerde model '{response_model}' – controleer credit-verbruik.")
+                msg = result['choices'][0].get('message', {})
+                response_text = (msg.get('content') or '').strip()
+                if isinstance(response_text, list):
+                    response_text = ' '.join(str(p.get('text', p)) for p in response_text if isinstance(p, dict)).strip()
+                if not response_text:
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[{timestamp}] [RouteLLM] Model {model}: 200 OK but empty content. message keys: {list(msg.keys())}")
+                    return None
+                parsed = _parse_categorization_response(response_text)
+                if not parsed.get('main_category') and not parsed.get('categories'):
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[{timestamp}] [RouteLLM] Model {model}: parse failed (no main_category). Response (first 300 chars): {response_text[:300]!r}")
+                    return None
+                parsed['llm'] = 'RouteLLM'
+                usage = result.get('usage') or result.get('completion_usage') or {}
+                if isinstance(usage, dict):
+                    prompt_tokens = usage.get('prompt_tokens') or usage.get('input_tokens')
+                    completion_tokens = usage.get('completion_tokens') or usage.get('output_tokens')
+                    total_tokens = usage.get('total_tokens')
+                    if total_tokens is None and (prompt_tokens is not None or completion_tokens is not None):
+                        total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+                    parsed['_token_usage'] = {
+                        'prompt_tokens': prompt_tokens,
+                        'completion_tokens': completion_tokens,
+                        'total_tokens': total_tokens,
+                        'compute_points_used': usage.get('compute_points_used'),
+                    }
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print(f"[{timestamp}] [RouteLLM] Successfully categorized using model {model} (Total calls: {_routellm_categorization_calls})")
+                if parsed.get('_token_usage'):
+                    u = parsed['_token_usage']
+                    if u.get('total_tokens') is not None or u.get('compute_points_used') is not None:
+                        print(f"[{timestamp}] [RouteLLM] Token usage: prompt={u.get('prompt_tokens')}, completion={u.get('completion_tokens')}, total={u.get('total_tokens')}, compute_points_used={u.get('compute_points_used')}")
                     else:
-                        print(f"[{timestamp}] [RouteLLM] Geen usage in response. Top-level keys: {list(result.keys())}")
-                    return parsed
-                elif response.status_code == 400:
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    try:
-                        err = response.json()
-                        print(f"[{timestamp}] [RouteLLM] Model {model} not available (400): {err.get('error', err)}")
-                    except Exception:
-                        print(f"[{timestamp}] [RouteLLM] Model {model} not available (400), trying next")
-                    continue
-                elif response.status_code == 401:
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    print(f"[{timestamp}] [RouteLLM] ❌ Authentication error (401) - API key is invalid or expired")
-                    print(f"[{timestamp}] [RouteLLM] Please check your ROUTELLM_API_KEY in Streamlit Secrets or .env file")
-                    return None
-                elif response.status_code == 403:
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    try:
-                        error_detail = response.json()
-                        print(f"[{timestamp}] [RouteLLM] ❌ Authorization error (403): {error_detail}")
-                    except:
-                        print(f"[{timestamp}] [RouteLLM] ❌ Authorization error (403) - You are not authorized to make requests")
-                    print(f"[{timestamp}] [RouteLLM] This usually means your API key has expired or doesn't have the right permissions")
-                    return None
+                        print(f"[{timestamp}] [RouteLLM] Token usage niet in response. Response usage keys: {list(result.get('usage') or result.get('completion_usage') or {})}")
                 else:
-                    # Log error but try next model
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    print(f"[{timestamp}] [RouteLLM] Model {model} returned status {response.status_code}")
-                    if response.status_code != 400:  # Don't log 400 as it's just model not available
-                        try:
-                            error_detail = response.json()
-                            print(f"[{timestamp}] [RouteLLM] Error detail: {error_detail}")
-                        except:
-                            pass
-                    continue
-                    
-            except requests.exceptions.RequestException as e:
-                print(f"[RouteLLM] Request error for model {model}: {e}")
-                continue
-            except Exception as e:
-                print(f"[RouteLLM] Error for model {model}: {e}")
-                continue
-        
-        return None
+                    print(f"[{timestamp}] [RouteLLM] Geen usage in response. Top-level keys: {list(result.keys())}")
+                return parsed
+            if response.status_code == 400:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                try:
+                    err = response.json()
+                    print(f"[{timestamp}] [RouteLLM] Model {model} not available (400): {err.get('error', err)}")
+                except Exception:
+                    print(f"[{timestamp}] [RouteLLM] Model {model} not available (400)")
+                return None
+            if response.status_code == 401:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print(f"[{timestamp}] [RouteLLM] ❌ Authentication error (401) - API key is invalid or expired")
+                print(f"[{timestamp}] [RouteLLM] Please check your ROUTELLM_API_KEY in Streamlit Secrets or .env file")
+                return None
+            if response.status_code == 403:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                try:
+                    error_detail = response.json()
+                    print(f"[{timestamp}] [RouteLLM] ❌ Authorization error (403): {error_detail}")
+                except Exception:
+                    print(f"[{timestamp}] [RouteLLM] ❌ Authorization error (403) - You are not authorized to make requests")
+                print(f"[{timestamp}] [RouteLLM] This usually means your API key has expired or doesn't have the right permissions")
+                return None
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            print(f"[{timestamp}] [RouteLLM] Model {model} returned status {response.status_code}")
+            if response.status_code != 400:
+                try:
+                    error_detail = response.json()
+                    print(f"[{timestamp}] [RouteLLM] Error detail: {error_detail}")
+                except Exception:
+                    pass
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"[RouteLLM] Request error for model {model}: {e}")
+            return None
+        except Exception as e:
+            print(f"[RouteLLM] Error for model {model}: {e}")
+            return None
     except Exception as e:
         print(f"RouteLLM categorization error: {e}")
         return None
